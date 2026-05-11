@@ -1,0 +1,532 @@
+<template>
+  <section class="board-page">
+    <Teleport to="#top-board-actions">
+      <div class="top-board-control">
+        <el-button size="small" type="primary" @click="addDialogOpen = true">Add</el-button>
+        <el-button size="small" :loading="appServers.loading" @click="loadAll">Refresh</el-button>
+      </div>
+    </Teleport>
+
+    <main class="board-surface thread-canvas">
+      <SplitPaneNode
+        v-if="boardTree !== null"
+        :tree="boardTree"
+        @focus-leaf="focusThreadPane"
+        @update-tree="updateBoardTree"
+      >
+        <template #leaf="{ leaf }">
+          <ThreadPanel
+            :app-server="appServerForThreadLeaf(leaf)"
+            :thread="threadForLeaf(leaf)"
+            :messages="messagesForLeaf(leaf)"
+            :queue-items="queueItemsForLeaf(leaf)"
+            :draft="draftForLeaf(leaf)"
+            :focused="focusedThreadLeafId === leaf.id"
+            @draft="setDraftForLeaf(leaf, $event)"
+            @save-draft="saveDraftForLeaf(leaf)"
+            @send="sendDraftForLeaf(leaf, $event)"
+            @dropped="dropIntoLeaf(leaf, $event)"
+            @close="closeThreadPane(leaf.id)"
+          />
+        </template>
+      </SplitPaneNode>
+
+      <el-empty v-else description="Click Add, then select an app-server and thread." />
+    </main>
+
+    <el-dialog v-model="addDialogOpen" title="Add Thread" width="620px">
+      <div class="dialog-toolbar">
+        <el-button :loading="appServers.loading" size="small" @click="loadAll">Refresh</el-button>
+        <el-button
+          size="small"
+          :disabled="selectedAppServerId === null"
+          @click="syncSelectedAppServer"
+        >
+          Sync Threads
+        </el-button>
+      </div>
+      <div class="add-thread-dialog">
+        <section>
+          <p class="dialog-label">App server</p>
+          <div class="selection-list">
+            <button
+              v-for="server in appServers.appServers"
+              :key="server.id"
+              class="selection-card"
+              :class="{ active: server.id === selectedAppServerId }"
+              type="button"
+              @click="selectAppServer(server.id)"
+            >
+              <span class="selection-card-title">
+                <strong>{{ appServerLabel(server) }}</strong>
+                <el-tag :type="statusTagType(server.status)" size="small">{{ server.status }}</el-tag>
+              </span>
+              <span class="dialog-actions">
+                <el-button
+                  v-if="server.status !== 'online'"
+                  size="small"
+                  type="primary"
+                  @click.stop="appServers.start(server.id)"
+                >
+                  Start
+                </el-button>
+                <el-button v-else size="small" type="warning" @click.stop="appServers.stop(server.id)">
+                  Stop
+                </el-button>
+              </span>
+            </button>
+          </div>
+        </section>
+        <section>
+          <p class="dialog-label">Thread</p>
+          <form
+            v-if="selectedAppServerId !== null"
+            class="thread-create-form"
+            @submit.prevent="createThread(selectedAppServerId)"
+          >
+            <el-input
+              v-model="newThreadNameByAppServerId[selectedAppServerId]"
+              size="small"
+              placeholder="New thread"
+              :disabled="selectedAppServer?.status !== 'online'"
+            />
+            <el-button
+              size="small"
+              type="primary"
+              native-type="submit"
+              :loading="creatingThreadByAppServerId[selectedAppServerId] === true"
+              :disabled="selectedAppServer?.status !== 'online'"
+            >
+              Create
+            </el-button>
+          </form>
+          <div class="selection-list">
+            <button
+              v-for="thread in selectedAppServerThreads"
+              :key="thread.id"
+              class="selection-card"
+              :class="{ active: selectedThreadId === thread.id }"
+              type="button"
+              @click="selectedThreadId = thread.id"
+            >
+              <span class="selection-card-title">
+                <strong>{{ thread.threadName }}</strong>
+                <el-tag v-if="thread.isGone" size="small" type="danger">gone</el-tag>
+                <el-tag v-else size="small">{{ thread.status ?? "current" }}</el-tag>
+              </span>
+            </button>
+          </div>
+        </section>
+      </div>
+      <template #footer>
+        <div class="dialog-actions">
+          <el-button @click="addDialogOpen = false">Cancel</el-button>
+          <el-button type="primary" :disabled="selectedThread === null" @click="addSelectedThread">
+            Add
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+  </section>
+</template>
+
+<script setup lang="ts">
+import type {
+  AppServerDto,
+  AppServerStatus,
+  ChatMessage,
+  QueueItemDto,
+  SplitPaneTree,
+  ThreadDto
+} from "@agentmesh/shared";
+import { computed, onMounted, ref } from "vue";
+
+import SplitPaneNode from "../components/SplitPaneNode.vue";
+import ThreadPanel from "../components/ThreadPanel.vue";
+import { apiClient } from "../api/client";
+import { useAppServerStore } from "../stores/appServers";
+import { useMessageStore } from "../stores/messages";
+import { useThreadStore } from "../stores/threads";
+import {
+  createLeaf,
+  firstLeafId,
+  leafPayloadIds,
+  removeLeaf,
+  splitLeaf,
+  useUiLayoutStore
+} from "../stores/uiLayout";
+import { appendDroppedText } from "../utils/messageDragDrop";
+
+const BOARDS_OWNER_ID = "root";
+
+type SplitPaneLeaf = Extract<SplitPaneTree, { readonly type: "leaf" }>;
+
+const appServers = useAppServerStore();
+const threads = useThreadStore();
+const messages = useMessageStore();
+const uiLayout = useUiLayoutStore();
+
+const boardTree = ref<SplitPaneTree | null>(null);
+const focusedThreadLeafId = ref<string | null>(null);
+const selectedAppServerId = ref<string | null>(null);
+const selectedThreadId = ref<string | null>(null);
+const newThreadNameByAppServerId = ref<Record<string, string>>({});
+const creatingThreadByAppServerId = ref<Record<string, boolean>>({});
+const addDialogOpen = ref(false);
+
+const selectedAppServer = computed(() =>
+  selectedAppServerId.value === null ? null : serverById(selectedAppServerId.value)
+);
+const selectedAppServerThreads = computed(() =>
+  selectedAppServerId.value === null ? [] : currentThreadsFor(selectedAppServerId.value)
+);
+const selectedThread = computed(() =>
+  selectedThreadId.value === null ? null : threads.threadById(selectedThreadId.value)
+);
+
+onMounted(() => {
+  void loadAll();
+});
+
+async function loadAll(): Promise<void> {
+  await Promise.all([appServers.load(), uiLayout.loadPersistedState()]);
+
+  if (selectedAppServerId.value === null) {
+    selectedAppServerId.value = appServers.appServers[0]?.id ?? null;
+  }
+
+  await Promise.all(appServers.appServers.map((server) => threads.loadForAppServer(server.id)));
+  refreshSelectedThread();
+
+  const persisted = uiLayout.getLayout("boards", BOARDS_OWNER_ID);
+  boardTree.value =
+    persisted !== null && leafPayloadIds(persisted, "threadId").length > 0 ? persisted : null;
+  focusedThreadLeafId.value = firstLeafId(boardTree.value);
+
+  await Promise.all(leafPayloadIds(boardTree.value, "threadId").map((threadId) => restoreThread(threadId)));
+  focusThreadPane(focusedThreadLeafId.value);
+}
+
+async function selectAppServer(appServerId: string): Promise<void> {
+  selectedAppServerId.value = appServerId;
+  appServers.select(appServerId);
+  uiLayout.focusAppServer(appServerId);
+  await threads.loadForAppServer(appServerId);
+  refreshSelectedThread();
+}
+
+function refreshSelectedThread(): void {
+  const currentThreads = selectedAppServerThreads.value;
+  if (
+    selectedThreadId.value === null ||
+    currentThreads.every((thread) => thread.id !== selectedThreadId.value)
+  ) {
+    selectedThreadId.value = currentThreads[0]?.id ?? null;
+  }
+}
+
+async function addSelectedThread(): Promise<void> {
+  if (selectedThread.value !== null) {
+    await addThreadPane(selectedThread.value);
+    addDialogOpen.value = false;
+  }
+}
+
+async function addThreadPane(thread: ThreadDto): Promise<void> {
+  const existingLeaf = findLeafByPayload(boardTree.value, "threadId", thread.id);
+  if (existingLeaf !== null) {
+    focusThreadPane(existingLeaf.id);
+    await openThreadData(thread);
+    return;
+  }
+
+  const targetLeafId =
+    lastLeafIdForAppServer(boardTree.value, thread.appServerId) ?? focusedThreadLeafId.value;
+  const direction = autoPlacementDirection(boardTree.value, thread.appServerId);
+  boardTree.value = splitLeaf(
+    boardTree.value,
+    targetLeafId,
+    createLeaf(crypto.randomUUID(), { threadId: thread.id }),
+    direction
+  );
+  focusedThreadLeafId.value = findLeafByPayload(boardTree.value, "threadId", thread.id)?.id ?? null;
+  await persistBoardTree();
+  await openThreadData(thread);
+}
+
+async function createThread(appServerId: string): Promise<void> {
+  const name = (newThreadNameByAppServerId.value[appServerId] ?? "").trim();
+  if (name.length === 0 || creatingThreadByAppServerId.value[appServerId] === true) {
+    return;
+  }
+
+  creatingThreadByAppServerId.value = {
+    ...creatingThreadByAppServerId.value,
+    [appServerId]: true
+  };
+  try {
+    const thread = await threads.createThread(appServerId, name);
+    if (thread !== null) {
+      newThreadNameByAppServerId.value = {
+        ...newThreadNameByAppServerId.value,
+        [appServerId]: ""
+      };
+      selectedThreadId.value = thread.id;
+      await addThreadPane(thread);
+      addDialogOpen.value = false;
+    }
+  } finally {
+    creatingThreadByAppServerId.value = {
+      ...creatingThreadByAppServerId.value,
+      [appServerId]: false
+    };
+  }
+}
+
+async function syncThreads(appServerId: string): Promise<void> {
+  await threads.sync(appServerId);
+  refreshSelectedThread();
+}
+
+async function syncSelectedAppServer(): Promise<void> {
+  if (selectedAppServerId.value !== null) {
+    await syncThreads(selectedAppServerId.value);
+  }
+}
+
+async function openThreadData(thread: ThreadDto): Promise<void> {
+  await threads.openThread(thread);
+  await Promise.all([messages.load(thread.id), messages.loadQueue(thread.id)]);
+  threads.focusThread(thread.appServerId, thread.id);
+  uiLayout.focusThread(thread.appServerId, thread.id);
+  appServers.select(thread.appServerId);
+  uiLayout.focusAppServer(thread.appServerId);
+}
+
+async function closeThreadPane(leafId: string): Promise<void> {
+  boardTree.value = removeLeaf(boardTree.value, leafId);
+  focusedThreadLeafId.value = firstLeafId(boardTree.value);
+  await persistBoardTree();
+  focusThreadPane(focusedThreadLeafId.value);
+}
+
+function updateBoardTree(tree: SplitPaneTree): void {
+  boardTree.value = tree;
+  void persistBoardTree();
+}
+
+function focusThreadPane(leafId: string | null): void {
+  focusedThreadLeafId.value = leafId;
+  const leaf = findLeaf(boardTree.value, leafId);
+  const thread = leaf === null ? null : threadForLeaf(leaf);
+
+  if (thread !== null) {
+    selectedAppServerId.value = thread.appServerId;
+    selectedThreadId.value = thread.id;
+    appServers.select(thread.appServerId);
+    uiLayout.focusAppServer(thread.appServerId);
+    threads.focusThread(thread.appServerId, thread.id);
+    uiLayout.focusThread(thread.appServerId, thread.id);
+  }
+}
+
+function threadForLeaf(leaf: SplitPaneTree): ThreadDto | null {
+  if (leaf.type !== "leaf" || leaf.threadId === undefined) {
+    return null;
+  }
+
+  return threads.threadById(leaf.threadId);
+}
+
+function appServerForThreadLeaf(leaf: SplitPaneTree): AppServerDto | null {
+  const thread = threadForLeaf(leaf);
+  return thread === null ? null : serverById(thread.appServerId);
+}
+
+function messagesForLeaf(leaf: SplitPaneTree): readonly ChatMessage[] {
+  const thread = threadForLeaf(leaf);
+  return thread === null ? [] : (messages.byThreadId[thread.id] ?? []);
+}
+
+function queueItemsForLeaf(leaf: SplitPaneTree): QueueItemDto[] {
+  const thread = threadForLeaf(leaf);
+  if (thread === null) {
+    return [];
+  }
+
+  return (messages.queueItemIdsByThreadId[thread.id] ?? [])
+    .map((id) => messages.queueItemsById[id])
+    .filter((item) => item !== undefined);
+}
+
+function draftForLeaf(leaf: SplitPaneTree): string {
+  const thread = threadForLeaf(leaf);
+  return thread === null ? "" : (uiLayout.draftsByThreadId[thread.id]?.draftMarkdown ?? "");
+}
+
+function setDraftForLeaf(leaf: SplitPaneTree, value: string): void {
+  const thread = threadForLeaf(leaf);
+  if (thread !== null) {
+    uiLayout.setDraft(thread.appServerId, thread.id, value);
+  }
+}
+
+async function saveDraftForLeaf(leaf: SplitPaneTree): Promise<void> {
+  const thread = threadForLeaf(leaf);
+  if (thread !== null) {
+    await uiLayout.saveDraft(thread.appServerId, thread.id);
+  }
+}
+
+async function sendDraftForLeaf(
+  leaf: SplitPaneTree,
+  payload: {
+    readonly attachmentIds: readonly string[];
+    readonly onSuccess: () => void;
+  }
+): Promise<void> {
+  const thread = threadForLeaf(leaf);
+  if (thread === null) {
+    return;
+  }
+
+  const draft = draftForLeaf(leaf).trim();
+  const appServer = serverById(thread.appServerId);
+  if (
+    (draft.length === 0 && payload.attachmentIds.length === 0) ||
+    thread.isGone ||
+    appServer?.status !== "online"
+  ) {
+    return;
+  }
+
+  const response = await messages.send(thread.id, draft, payload.attachmentIds);
+  if (response === null) {
+    return;
+  }
+
+  uiLayout.setDraft(thread.appServerId, thread.id, "");
+  await uiLayout.saveDraft(thread.appServerId, thread.id);
+  payload.onSuccess();
+}
+
+function dropIntoLeaf(leaf: SplitPaneTree, text: string): void {
+  const thread = threadForLeaf(leaf);
+  if (thread === null) {
+    return;
+  }
+
+  uiLayout.setDraft(thread.appServerId, thread.id, appendDroppedText(draftForLeaf(leaf), text));
+}
+
+async function restoreThread(threadId: string): Promise<void> {
+  let thread = threads.threadById(threadId);
+  if (thread === null) {
+    try {
+      thread = await apiClient.getThread(threadId);
+      threads.upsertThread(thread);
+    } catch {
+      return;
+    }
+  }
+
+  if (thread.importedAt === null) {
+    await threads.openThread(thread);
+  } else {
+    threads.rememberOpenThread(thread);
+  }
+  await Promise.all([messages.load(thread.id), messages.loadQueue(thread.id)]);
+}
+
+async function persistBoardTree(): Promise<void> {
+  await uiLayout.persistTree("boards", BOARDS_OWNER_ID, boardTree.value);
+}
+
+function currentThreadsFor(appServerId: string): readonly ThreadDto[] {
+  return (threads.byAppServerId[appServerId] ?? []).filter((thread) => thread.isCurrent);
+}
+
+function serverById(appServerId: string): AppServerDto | null {
+  return appServers.appServers.find((server) => server.id === appServerId) ?? null;
+}
+
+function appServerLabel(server: AppServerDto): string {
+  return `${server.host} / ${workspaceBasename(server.workspace)}`;
+}
+
+function statusTagType(status: AppServerStatus): "success" | "warning" | "danger" | "info" {
+  if (status === "online") {
+    return "success";
+  }
+  if (status === "starting" || status === "stopping") {
+    return "warning";
+  }
+  if (status === "error") {
+    return "danger";
+  }
+  return "info";
+}
+
+function autoPlacementDirection(tree: SplitPaneTree | null, appServerId: string): "right" | "down" {
+  const appServerPaneCount = threadIdsForAppServer(tree, appServerId).length;
+  if (appServerPaneCount > 0) {
+    return appServerPaneCount % 2 === 0 ? "down" : "right";
+  }
+
+  return leafPayloadIds(tree, "threadId").length % 2 === 0 ? "down" : "right";
+}
+
+function threadIdsForAppServer(tree: SplitPaneTree | null, appServerId: string): string[] {
+  return leafPayloadIds(tree, "threadId").filter(
+    (threadId) => threads.threadById(threadId)?.appServerId === appServerId
+  );
+}
+
+function lastLeafIdForAppServer(tree: SplitPaneTree | null, appServerId: string): string | null {
+  if (tree === null) {
+    return null;
+  }
+
+  if (tree.type === "leaf") {
+    return tree.threadId !== undefined && threads.threadById(tree.threadId)?.appServerId === appServerId
+      ? tree.id
+      : null;
+  }
+
+  return lastLeafIdForAppServer(tree.second, appServerId) ?? lastLeafIdForAppServer(tree.first, appServerId);
+}
+
+function findLeaf(tree: SplitPaneTree | null, id: string | null): SplitPaneLeaf | null {
+  if (tree === null || id === null) {
+    return null;
+  }
+
+  if (tree.type === "leaf") {
+    return tree.id === id ? tree : null;
+  }
+
+  return findLeaf(tree.first, id) ?? findLeaf(tree.second, id);
+}
+
+function findLeafByPayload(
+  tree: SplitPaneTree | null,
+  key: "appServerId" | "threadId",
+  value: string
+): SplitPaneLeaf | null {
+  if (tree === null) {
+    return null;
+  }
+
+  if (tree.type === "leaf") {
+    return tree[key] === value ? tree : null;
+  }
+
+  return findLeafByPayload(tree.first, key, value) ?? findLeafByPayload(tree.second, key, value);
+}
+
+function workspaceBasename(workspace: string): string {
+  const normalized = workspace.trim().replace(/[\\/]+$/u, "");
+  const basename = normalized.split(/[\\/]/u).pop();
+  return basename !== undefined && basename.length > 0 ? basename : workspace;
+}
+</script>

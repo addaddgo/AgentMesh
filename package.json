@@ -1,0 +1,30 @@
+{
+  "name": "agentmesh",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AgentMesh local control plane for Codex app-server processes.",
+  "packageManager": "pnpm@10.11.0",
+  "type": "module",
+  "scripts": {
+    "backend": "pnpm --filter @agentmesh/backend dev",
+    "frontend": "pnpm --filter @agentmesh/frontend dev",
+    "dev": "pnpm --parallel --filter @agentmesh/backend --filter @agentmesh/frontend dev",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:integration": "pnpm --filter @agentmesh/backend test:integration",
+    "smoke:codex": "AGENTMESH_REAL_CODEX_SMOKE=1 pnpm --filter @agentmesh/backend test:smoke:codex",
+    "smoke:ssh": "AGENTMESH_SSH_SMOKE=1 pnpm --filter @agentmesh/backend test:smoke:ssh",
+    "format": "prettier --ignore-unknown --write package.json pnpm-workspace.yaml tsconfig*.json eslint.config.js .prettierrc.json .gitignore \"apps/**/*.{ts,vue,json,html}\" \"packages/**/*.{ts,json}\"",
+    "format:check": "prettier --ignore-unknown --check package.json pnpm-workspace.yaml tsconfig*.json eslint.config.js .prettierrc.json .gitignore \"apps/**/*.{ts,vue,json,html}\" \"packages/**/*.{ts,json}\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.27.0",
+    "@types/node": "^22.15.18",
+    "eslint": "^9.27.0",
+    "eslint-config-prettier": "^10.1.5",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.32.1"
+  }
+}

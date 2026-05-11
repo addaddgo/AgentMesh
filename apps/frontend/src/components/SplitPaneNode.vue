@@ -50,6 +50,8 @@ const emit = defineEmits<{
   updateTree: [tree: SplitPaneTree];
 }>();
 
+const MIN_PANE_SIZE_PX = 260;
+
 defineSlots<{
   leaf(props: { readonly leaf: SplitPaneTree }): unknown;
 }>();
@@ -82,11 +84,17 @@ function startResize(): void {
   const splitTree = props.tree;
   const onMouseMove = (event: MouseEvent): void => {
     const rect = element.getBoundingClientRect();
+    const totalSize = direction === "horizontal" ? rect.width : rect.height;
+    if (totalSize <= 0) {
+      return;
+    }
+
+    const minRatio = Math.min(0.45, MIN_PANE_SIZE_PX / totalSize);
     const rawRatio =
       direction === "horizontal"
         ? (event.clientX - rect.left) / rect.width
         : (event.clientY - rect.top) / rect.height;
-    const ratio = Math.min(0.9, Math.max(0.1, rawRatio));
+    const ratio = Math.min(1 - minRatio, Math.max(minRatio, rawRatio));
     emit("updateTree", { ...splitTree, ratio });
   };
 

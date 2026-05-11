@@ -66,6 +66,18 @@ export const useThreadStore = defineStore("threads", {
       }
     },
 
+    async resumeThread(thread: ThreadDto): Promise<ThreadDto | null> {
+      try {
+        const resumed = await apiClient.resumeThread(thread.appServerId, thread.id);
+        this.upsertThread(resumed);
+        this.focusThread(resumed.appServerId, resumed.id);
+        return resumed;
+      } catch (error) {
+        notifyError(error, "Failed to resume thread");
+        return null;
+      }
+    },
+
     async openThread(thread: ThreadDto): Promise<void> {
       this.rememberOpenThread(thread);
 

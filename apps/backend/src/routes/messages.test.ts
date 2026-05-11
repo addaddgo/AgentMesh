@@ -151,6 +151,74 @@ describe("message send API", () => {
     );
   });
 
+  it("requires explicit resume before sending to a listed but not loaded Codex thread", async () => {
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    const scriptPath = createResumeRequiredCodexScript(tempDir);
+    fs.mkdirSync(workspace);
+
+    const { appServerId, threadId } = await createStartedAppServer(app, workspace, scriptPath);
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/api/messages/send",
+      payload: {
+        threadId,
+        text: "Hello after resume"
+      }
+    });
+
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json()).toMatchObject({
+      error: {
+        code: "validation_error",
+        message: "Thread is not loaded. Resume it before sending."
+      }
+    });
+
+    const resumed = await app.inject({
+      method: "POST",
+      url: `/api/app-servers/${appServerId}/threads/${threadId}/resume`
+    });
+
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json()).toMatchObject({
+      thread: { id: threadId, status: "idle" }
+    });
+
+    const sent = await app.inject({
+      method: "POST",
+      url: "/api/messages/send",
+      payload: {
+        threadId,
+        text: "Hello after resume"
+      }
+    });
+    const messageId = sent.json<{ message: { id: string } }>().message.id;
+
+    expect(sent.statusCode).toBe(202);
+    await waitFor(() => {
+      const row = app.database.sqlite
+        .prepare("SELECT status FROM messages WHERE id = ?")
+        .get(messageId) as { status: string } | undefined;
+      return row?.status === "completed";
+    });
+
+    const requests = readJsonLines(path.join(workspace, "requests.ndjson"));
+    const requestMethods = requests.map((request) =>
+      typeof request === "object" && request !== null ? (request as { method?: unknown }).method : null
+    );
+    const thread = app.database.sqlite
+      .prepare("SELECT status FROM threads WHERE id = ?")
+      .get(threadId) as { status: string };
+
+    expect(requestMethods).toEqual(
+      expect.arrayContaining(["thread/list", "turn/start", "thread/resume"])
+    );
+    expect(requestMethods.filter((method) => method === "turn/start")).toHaveLength(1);
+    expect(thread.status).toBe("idle");
+  });
+
   it("fails offline sends visibly and leaves the composer draft untouched", async () => {
     const { app, tempDir } = await setup();
     const workspace = path.join(tempDir, "workspace");
@@ -464,6 +532,80 @@ function createFakeCodexScript(tempDir: string): string {
               role: "assistant",
               status: "completed",
               text: "Codex response"
+            }
+          }) + "\\n");
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { turn: { id: "codex-turn-1" }, status: "completed" }
+          }) + "\\n");
+        }
+      }
+    `
+  );
+  return scriptPath;
+}
+
+function createResumeRequiredCodexScript(tempDir: string): string {
+  const scriptPath = path.join(
+    tempDir,
+    `fake-codex-resume-${Math.random().toString(16).slice(2)}.mjs`
+  );
+  fs.writeFileSync(
+    scriptPath,
+    `
+      import fs from "node:fs";
+      import path from "node:path";
+      import readline from "node:readline";
+
+      const lines = readline.createInterface({ input: process.stdin });
+      const requestsPath = path.join(process.cwd(), "requests.ndjson");
+      let loaded = false;
+
+      for await (const line of lines) {
+        const request = JSON.parse(line);
+        fs.appendFileSync(requestsPath, JSON.stringify(request) + "\\n");
+
+        if (request.method === "initialize") {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { ok: true }
+          }) + "\\n");
+        } else if (request.method === "thread/list") {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              data: [{
+                id: "codex-thread-1",
+                name: "Main",
+                status: { type: loaded ? "idle" : "notLoaded" }
+              }]
+            }
+          }) + "\\n");
+        } else if (request.method === "thread/resume") {
+          loaded = true;
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { thread: { id: request.params.threadId, name: "Main", status: { type: "idle" } } }
+          }) + "\\n");
+        } else if (request.method === "turn/start" && !loaded) {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { code: -32600, message: "thread not found: " + request.params.threadId }
+          }) + "\\n");
+        } else if (request.method === "turn/start") {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            method: "thread/message",
+            params: {
+              threadId: request.params.threadId,
+              role: "assistant",
+              status: "completed",
+              text: "Codex response after resume"
             }
           }) + "\\n");
           process.stdout.write(JSON.stringify({

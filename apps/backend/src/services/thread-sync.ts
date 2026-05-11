@@ -129,6 +129,38 @@ export class ThreadSyncService {
     return dto;
   }
 
+  public async resumeThread(
+    appServerId: string,
+    requester: CodexRequester,
+    threadId: string
+  ): Promise<ThreadDto> {
+    const existing = this.findById(appServerId, threadId);
+    if (existing === undefined) {
+      throw new NotFoundError("Thread not found");
+    }
+
+    const result = await requester.request("thread/resume", { threadId: existing.codex_thread_id });
+    const rawThread = extractResumedThread(result);
+    this.upsertThreads(appServerId, [normalizeCodexThread(rawThread)]);
+    const resumed = this.findByCodexThreadId(appServerId, existing.codex_thread_id);
+
+    if (resumed === undefined) {
+      throw new ProtocolError("Codex thread/resume did not update the local thread record");
+    }
+
+    const dto = toDto(resumed);
+    this.events.publish({
+      type: "thread.list_changed",
+      appServerId,
+      payload: {
+        threads: this.listCurrent(appServerId),
+        changed: true
+      }
+    });
+
+    return dto;
+  }
+
   private async fetchCodexThreads(
     requester: CodexRequester,
     workspace: string
@@ -292,6 +324,12 @@ export class ThreadSyncService {
       .get(appServerId, codexThreadId) as ThreadRow | undefined;
   }
 
+  private findById(appServerId: string, threadId: string): ThreadRow | undefined {
+    return this.database.sqlite
+      .prepare("SELECT * FROM threads WHERE app_server_id = ? AND id = ?")
+      .get(appServerId, threadId) as ThreadRow | undefined;
+  }
+
   private ensureAppServerExists(appServerId: string): void {
     this.getAppServerWorkspace(appServerId);
   }
@@ -364,10 +402,22 @@ function normalizeCodexThread(value: JsonValue): CodexThread {
     codexThreadId,
     threadName,
     title: title ?? null,
-    status: firstString(value.status) ?? null,
+    status: readThreadStatus(value),
     cwd: firstString(value.cwd, value.workspace) ?? null,
     raw: value
   };
+}
+
+function readThreadStatus(value: Record<string, JsonValue>): string | null {
+  if (typeof value.status === "string") {
+    return value.status;
+  }
+
+  if (isRecord(value.status)) {
+    return firstString(value.status.type, value.status.status) ?? null;
+  }
+
+  return null;
 }
 
 function extractStartedThread(result: JsonValue): JsonValue {
@@ -377,6 +427,18 @@ function extractStartedThread(result: JsonValue): JsonValue {
 
   if (result.thread === undefined) {
     throw new ProtocolError("Codex thread/start response did not include a thread");
+  }
+
+  return result.thread;
+}
+
+function extractResumedThread(result: JsonValue): JsonValue {
+  if (!isRecord(result)) {
+    throw new ProtocolError("Codex thread/resume returned an invalid response");
+  }
+
+  if (result.thread === undefined) {
+    throw new ProtocolError("Codex thread/resume response did not include a thread");
   }
 
   return result.thread;

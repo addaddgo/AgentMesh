@@ -6,6 +6,7 @@ import type {
   CodexEventListResponse,
   ThreadCreateResponse,
   ThreadListResponse,
+  ThreadResumeResponse,
   ThreadSyncResponse
 } from "@agentmesh/shared";
 
@@ -20,6 +21,11 @@ import { validateBody, validateParams, validateQuery } from "../validation.js";
 
 const appServerParamsSchema = z.object({
   id: z.string().min(1)
+});
+
+const appServerThreadParamsSchema = z.object({
+  id: z.string().min(1),
+  threadId: z.string().min(1)
 });
 
 const eventQuerySchema = z.object({
@@ -139,6 +145,18 @@ export async function registerAppServerRoutes(app: FastifyInstance): Promise<voi
       const { name } = request.body as z.infer<typeof createThreadSchema>;
       return {
         thread: await threadSync.createThread(id, app.appServerLifecycle.getTransport(id), name)
+      };
+    }
+  );
+
+  app.post(
+    "/api/app-servers/:id/threads/:threadId/resume",
+    { preHandler: validateParams(appServerThreadParamsSchema) },
+    async (request): Promise<ThreadResumeResponse> => {
+      const { id, threadId } = request.params as z.infer<typeof appServerThreadParamsSchema>;
+      service.get(id);
+      return {
+        thread: await threadSync.resumeThread(id, app.appServerLifecycle.getTransport(id), threadId)
       };
     }
   );

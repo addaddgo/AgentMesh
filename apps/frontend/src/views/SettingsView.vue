@@ -6,14 +6,29 @@
         <h1>App Servers</h1>
         <p>Configure local and SSH Codex app-server processes, then manage their lifecycle.</p>
       </div>
-      <el-button :loading="appServers.loading" @click="appServers.load()">Refresh</el-button>
+      <el-button
+        :icon="Refresh"
+        :loading="appServers.loading"
+        circle
+        title="Refresh app-servers"
+        aria-label="Refresh app-servers"
+        @click="appServers.load()"
+      />
     </header>
 
     <div class="app-server-layout">
       <aside class="server-list-panel">
         <div class="sidebar-title">
           <strong>Configured</strong>
-          <el-button size="small" type="primary" @click="newServer">New</el-button>
+          <el-button
+            size="small"
+            type="primary"
+            :icon="Plus"
+            circle
+            title="New app-server"
+            aria-label="New app-server"
+            @click="newServer"
+          />
         </div>
 
         <el-empty
@@ -111,13 +126,21 @@
           <div class="form-actions">
             <el-button
               type="primary"
+              :icon="editingServer === null ? CirclePlus : Select"
               native-type="submit"
               :loading="saving"
               :disabled="form.workspace.trim().length === 0"
-            >
-              {{ editingServer === null ? "Create app server" : "Save changes" }}
-            </el-button>
-            <el-button @click="resetForm">Reset</el-button>
+              circle
+              :title="editingServer === null ? 'Create app-server' : 'Save changes'"
+              :aria-label="editingServer === null ? 'Create app-server' : 'Save changes'"
+            />
+            <el-button
+              :icon="RefreshLeft"
+              circle
+              title="Reset"
+              aria-label="Reset"
+              @click="resetForm"
+            />
           </div>
         </el-form>
 
@@ -132,27 +155,33 @@
           <div class="lifecycle-actions">
             <el-button
               type="success"
+              :icon="VideoPlay"
               :loading="runningAction === 'start'"
               :disabled="isBusy(editingServer.status) || editingServer.status === 'online'"
+              circle
+              title="Start"
+              aria-label="Start"
               @click="runLifecycle('start')"
-            >
-              Start
-            </el-button>
+            />
             <el-button
               type="warning"
+              :icon="VideoPause"
               :loading="runningAction === 'stop'"
               :disabled="isBusy(editingServer.status) || editingServer.status === 'offline'"
+              circle
+              title="Stop"
+              aria-label="Stop"
               @click="runLifecycle('stop')"
-            >
-              Stop
-            </el-button>
+            />
             <el-button
+              :icon="RefreshRight"
               :loading="runningAction === 'restart'"
               :disabled="isBusy(editingServer.status)"
+              circle
+              title="Restart"
+              aria-label="Restart"
               @click="runLifecycle('restart')"
-            >
-              Restart
-            </el-button>
+            />
           </div>
         </section>
       </main>
@@ -161,6 +190,16 @@
 </template>
 
 <script setup lang="ts">
+import {
+  CirclePlus,
+  Plus,
+  Refresh,
+  RefreshLeft,
+  RefreshRight,
+  Select,
+  VideoPause,
+  VideoPlay
+} from "@element-plus/icons-vue";
 import type { ApiErrorDetail, AppServerDto, AppServerStatus } from "@agentmesh/shared";
 import { computed, onMounted, reactive, ref } from "vue";
 

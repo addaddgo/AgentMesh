@@ -37,6 +37,7 @@ type ThreadRow = {
   readonly ssh_user: string | null;
   readonly ssh_port: number | null;
   readonly workspace: string;
+  readonly thread_status: string | null;
 };
 
 type MessageRow = {
@@ -220,16 +221,7 @@ export class MessageSendService {
     });
 
     try {
-      const result = await transport.requestObserved(
-        "turn/start",
-        {
-          threadId: payload.codexThreadId,
-          input
-        } satisfies JsonValue,
-        (response, rawLine, method) => {
-          this.storeCodexObservedEvent(item, turn.id, response, rawLine, `${method}.response`);
-        }
-      );
+      const result = await this.startTurnWithLoadedThread(transport, item, turn.id, payload, input);
       codexTurnId = extractCodexTurnId(result);
 
       this.updateTurn(turn.id, {
@@ -277,6 +269,7 @@ export class MessageSendService {
             threads.codex_thread_id,
             threads.is_current,
             threads.is_gone,
+            threads.status AS thread_status,
             app_servers.status AS app_server_status,
             app_servers.host_kind,
             app_servers.host,
@@ -300,6 +293,10 @@ export class MessageSendService {
 
     if (thread.is_current !== 1) {
       throw new RequestValidationError("Cannot send to a non-current thread");
+    }
+
+    if (thread.thread_status === "notLoaded") {
+      throw new RequestValidationError("Thread is not loaded. Resume it before sending.");
     }
 
     return thread;
@@ -549,6 +546,25 @@ export class MessageSendService {
 
     return input;
   }
+
+  private async startTurnWithLoadedThread(
+    transport: ReturnType<AppServerLifecycleRegistry["getTransport"]>,
+    item: QueueItemDto,
+    turnId: string,
+    payload: SendPayload,
+    input: readonly JsonValue[]
+  ): Promise<JsonValue> {
+    return transport.requestObserved(
+      "turn/start",
+      {
+        threadId: payload.codexThreadId,
+        input
+      } satisfies JsonValue,
+      (response, rawLine, method) => {
+        this.storeCodexObservedEvent(item, turnId, response, rawLine, `${method}.response`);
+      }
+    );
+  }
 }
 
 function notificationMatchesTurn(
@@ -612,8 +628,8 @@ function extractTurnCompletion(notification: unknown): TurnCompletion | null {
     (method.includes("completed") || status === "completed" || status === "failed")
   ) {
     return {
-      status: status === "failed" || error !== null ? "failed" : "completed",
-      error: error === null || error === undefined ? null : stringifyError(error)
+      status: status === "failed" || error != null ? "failed" : "completed",
+      error: error == null ? null : stringifyError(error)
     };
   }
 

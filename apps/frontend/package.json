@@ -12,9 +12,11 @@
   },
   "dependencies": {
     "@agentmesh/shared": "workspace:*",
+    "@codemirror/autocomplete": "^6.20.2",
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.42.1",
+    "@element-plus/icons-vue": "^2.3.2",
     "@vitejs/plugin-vue": "^5.2.4",
     "codemirror": "^6.0.2",
     "element-plus": "^2.14.0",

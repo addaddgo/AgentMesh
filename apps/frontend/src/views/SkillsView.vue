@@ -9,10 +9,22 @@
         </p>
       </div>
       <div class="actions">
-        <el-button :loading="skills.loading" @click="refreshSkills">Refresh Skills</el-button>
-        <el-button :loading="appServers.loading" @click="appServers.load()">
-          Refresh App Servers
-        </el-button>
+        <el-button
+          :icon="MagicStick"
+          :loading="skills.loading"
+          circle
+          title="Refresh skills"
+          aria-label="Refresh skills"
+          @click="refreshSkills"
+        />
+        <el-button
+          :icon="Refresh"
+          :loading="appServers.loading"
+          circle
+          title="Refresh app-servers"
+          aria-label="Refresh app-servers"
+          @click="appServers.load()"
+        />
       </div>
     </header>
 
@@ -91,12 +103,14 @@
           </div>
           <el-button
             type="primary"
+            :icon="Connection"
             :loading="skills.syncing"
             :disabled="!skills.canSync"
+            circle
+            title="Sync selected"
+            aria-label="Sync selected"
             @click="skills.syncSelected()"
-          >
-            Sync Selected
-          </el-button>
+          />
         </header>
 
         <el-alert
@@ -138,6 +152,7 @@
 </template>
 
 <script setup lang="ts">
+import { Connection, MagicStick, Refresh } from "@element-plus/icons-vue";
 import type { AppServerDto, AppServerStatus } from "@agentmesh/shared";
 import { onMounted } from "vue";
 

@@ -26,6 +26,7 @@ import type {
   ThreadListResponse,
   ThreadMessagesResponse,
   ThreadQueueResponse,
+  ThreadResumeResponse,
   ThreadSyncResponse,
   UiLayoutListResponse,
   UiLayoutPutRequest,
@@ -125,6 +126,14 @@ export class ApiClient {
         method: "POST",
         body: payload
       }
+    );
+    return response.thread;
+  }
+
+  public async resumeThread(appServerId: string, threadId: string): Promise<ThreadDto> {
+    const response = await this.request<ThreadResumeResponse>(
+      `/api/app-servers/${encodeURIComponent(appServerId)}/threads/${encodeURIComponent(threadId)}/resume`,
+      { method: "POST" }
     );
     return response.thread;
   }

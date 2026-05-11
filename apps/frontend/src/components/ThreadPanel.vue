@@ -13,12 +13,37 @@
         <div class="thread-header-actions">
           <el-tag v-if="thread.isGone" type="danger">Gone</el-tag>
           <el-tag v-else-if="appServer?.status !== 'online'" type="warning">Offline</el-tag>
-          <el-button size="small" :loading="rawEventsLoading" @click="openDebugDrawer">
-            Raw JSON
-          </el-button>
-          <el-button size="small" type="danger" plain @click.stop="emit('close')">
-            Close
-          </el-button>
+          <el-button
+            v-if="thread.status === 'notLoaded'"
+            size="small"
+            type="primary"
+            :icon="SwitchButton"
+            :loading="resuming"
+            :disabled="appServer?.status !== 'online'"
+            circle
+            title="Resume thread"
+            aria-label="Resume thread"
+            @click.stop="emit('resume')"
+          />
+          <el-button
+            size="small"
+            :icon="Document"
+            :loading="rawEventsLoading"
+            circle
+            title="Raw JSON"
+            aria-label="Raw JSON"
+            @click="openDebugDrawer"
+          />
+          <el-button
+            size="small"
+            type="danger"
+            plain
+            :icon="CloseBold"
+            circle
+            title="Close thread"
+            aria-label="Close thread"
+            @click.stop="emit('close')"
+          />
         </div>
       </header>
 
@@ -94,21 +119,25 @@
                   <el-button
                     size="small"
                     type="primary"
+                    :icon="Check"
                     :loading="approvals.isResponding(part.approvalId)"
                     :disabled="approvals.isResponding(part.approvalId)"
+                    circle
+                    title="Approve"
+                    aria-label="Approve"
                     @click="respondApproval(part.approvalId, 'approve')"
-                  >
-                    Approve
-                  </el-button>
+                  />
                   <el-button
                     size="small"
                     type="danger"
+                    :icon="CloseBold"
                     :loading="approvals.isResponding(part.approvalId)"
                     :disabled="approvals.isResponding(part.approvalId)"
+                    circle
+                    title="Deny"
+                    aria-label="Deny"
                     @click="respondApproval(part.approvalId, 'deny')"
-                  >
-                    Deny
-                  </el-button>
+                  />
                 </div>
               </details>
               <details v-else-if="part.type === 'diff'" class="part-card">
@@ -148,7 +177,6 @@
       >
         <div class="composer-toolbar">
           <span>Markdown source</span>
-          <el-switch v-model="previewOpen" size="small" active-text="Preview" />
         </div>
 
         <div
@@ -157,8 +185,6 @@
           :class="{ disabled: !canEdit }"
           @blur.capture="saveDraftNow"
         />
-
-        <div v-if="previewOpen" class="markdown-preview markdown-part" v-html="previewHtml" />
 
         <div v-if="isDropTarget" class="composer-drop-feedback">Drop to append text to draft</div>
 
@@ -173,11 +199,13 @@
               size="small"
               text
               type="danger"
+              :icon="Delete"
               :disabled="!canEdit"
+              circle
+              title="Remove image"
+              aria-label="Remove image"
               @click="removeAttachment(item.attachment.id)"
-            >
-              Remove
-            </el-button>
+            />
           </article>
         </div>
 
@@ -202,11 +230,21 @@
             <el-button
               :disabled="!canEdit || attachments.length >= MAX_ATTACHMENTS"
               :loading="uploading"
+              :icon="PictureFilled"
+              circle
+              title="Attach images"
+              aria-label="Attach images"
               @click="fileInput?.click()"
-            >
-              Attach Images
-            </el-button>
-            <el-button type="primary" :disabled="!canSend" @click="sendComposer"> Send </el-button>
+            />
+            <el-button
+              type="primary"
+              :icon="Promotion"
+              :disabled="!canSend"
+              circle
+              title="Send"
+              aria-label="Send"
+              @click="sendComposer"
+            />
           </div>
         </div>
       </div>
@@ -227,6 +265,15 @@
 </template>
 
 <script setup lang="ts">
+import {
+  Check,
+  CloseBold,
+  Delete,
+  Document,
+  PictureFilled,
+  Promotion,
+  SwitchButton
+} from "@element-plus/icons-vue";
 import type {
   AppServerDto,
   ApprovalDecision,
@@ -237,6 +284,12 @@ import type {
   QueueItemDto,
   ThreadDto
 } from "@agentmesh/shared";
+import {
+  autocompletion,
+  type Completion,
+  type CompletionContext,
+  type CompletionResult
+} from "@codemirror/autocomplete";
 import { Compartment } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
@@ -248,6 +301,7 @@ import { apiClient } from "../api/client";
 import ApprovalCard from "./ApprovalCard.vue";
 import { useApprovalStore } from "../stores/approvals";
 import { notifyError } from "../stores/errors";
+import { useSkillStore } from "../stores/skills";
 import {
   canDropMessageText,
   readMessageTextDrop,
@@ -259,6 +313,17 @@ const MESSAGE_ROW_HEIGHT = 190;
 const VIRTUAL_BUFFER = 6;
 const MAX_ATTACHMENTS = 5;
 const markdownRenderer = new MarkdownIt({ html: false, linkify: true });
+
+const SLASH_COMMANDS: readonly Completion[] = [
+  { label: "/help", type: "keyword", detail: "Show Codex commands", apply: "/help " },
+  { label: "/model", type: "keyword", detail: "Change or inspect model", apply: "/model " },
+  { label: "/approvals", type: "keyword", detail: "Configure approval mode", apply: "/approvals " },
+  { label: "/status", type: "keyword", detail: "Show current thread status", apply: "/status " },
+  { label: "/compact", type: "keyword", detail: "Compact conversation context", apply: "/compact " },
+  { label: "/init", type: "keyword", detail: "Initialize project instructions", apply: "/init " },
+  { label: "/review", type: "keyword", detail: "Ask for a code review", apply: "/review " },
+  { label: "/clear", type: "keyword", detail: "Clear local prompt context", apply: "/clear " }
+];
 
 type SelectedAttachment = {
   readonly attachment: ImageAttachmentDto;
@@ -272,6 +337,7 @@ const props = defineProps<{
   readonly queueItems: readonly QueueItemDto[];
   readonly draft: string;
   readonly focused: boolean;
+  readonly resuming?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -284,10 +350,12 @@ const emit = defineEmits<{
     }
   ];
   dropped: [value: string];
+  resume: [];
   close: [];
 }>();
 
 const approvals = useApprovalStore();
+const skills = useSkillStore();
 const scrollContainer = ref<HTMLElement | null>(null);
 const editorHost = ref<HTMLElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -297,7 +365,6 @@ const debugDrawerOpen = ref(false);
 const rawEvents = ref<readonly CodexEventDto[]>([]);
 const rawEventsLoading = ref(false);
 const attachments = ref<SelectedAttachment[]>([]);
-const previewOpen = ref(false);
 const uploading = ref(false);
 const isDropTarget = ref(false);
 const editableCompartment = new Compartment();
@@ -312,6 +379,9 @@ const disabledReason = computed(() => {
   if (props.appServer?.status !== "online") {
     return "The app-server is offline.";
   }
+  if (props.thread?.status === "notLoaded") {
+    return "Resume this thread before sending.";
+  }
   return null;
 });
 
@@ -322,7 +392,6 @@ const canSend = computed(
     !uploading.value &&
     (props.draft.trim().length > 0 || attachments.value.length > 0)
 );
-const previewHtml = computed(() => markdownRenderer.render(props.draft));
 const threadApprovals = computed<readonly ApprovalDto[]>(() => {
   if (props.thread === null) {
     return [];
@@ -359,8 +428,7 @@ const threadModel = computed(() => {
   return "default";
 });
 const threadTitle = computed(() => {
-  const appServerName =
-    props.appServer === null ? "missing" : workspaceBasename(props.appServer.workspace);
+  const appServerName = props.appServer === null ? "missing" : props.appServer.name;
   return `${appServerName} / ${props.thread?.threadName ?? "thread"}`;
 });
 const virtualTotalHeight = computed(() => props.messages.length * MESSAGE_ROW_HEIGHT);
@@ -395,6 +463,12 @@ onMounted(() => {
       basicSetup,
       markdown(),
       EditorView.lineWrapping,
+      autocompletion({
+        activateOnTyping: true,
+        icons: false,
+        maxRenderedOptions: 12,
+        override: [completeCommandOrSkill]
+      }),
       editableCompartment.of(EditorView.editable.of(canEdit.value)),
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) {
@@ -406,6 +480,10 @@ onMounted(() => {
       })
     ]
   });
+
+  if (skills.skills.length === 0 && !skills.loading) {
+    void skills.load();
+  }
 });
 
 onBeforeUnmount(() => {
@@ -460,6 +538,41 @@ function dragMessage(event: DragEvent, message: ChatMessage): void {
 
 function canDragMessage(message: ChatMessage): boolean {
   return textForMessageDrag(message).trim().length > 0;
+}
+
+function completeCommandOrSkill(context: CompletionContext): CompletionResult | null {
+  const line = context.state.doc.lineAt(context.pos);
+  const beforeCursor = line.text.slice(0, context.pos - line.from);
+  const match = /(^|\s)([/$][\w-]*)$/u.exec(beforeCursor);
+  if (match === null) {
+    return null;
+  }
+
+  const token = match[2] ?? "";
+  const from = context.pos - token.length;
+  if (token.startsWith("/")) {
+    return {
+      from,
+      options: SLASH_COMMANDS,
+      validFor: /^\/[\w-]*$/u
+    };
+  }
+
+  return {
+    from,
+    options: skills.skills.map((skill) => ({
+      label: `$${skill.name}`,
+      type: "variable",
+      detail: compactCompletionDetail(skill.description),
+      apply: `$${skill.name} `
+    })),
+    validFor: /^\$[\w-]*$/u
+  };
+}
+
+function compactCompletionDetail(value: string): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
 }
 
 function dragEnterComposer(event: DragEvent): void {
@@ -625,12 +738,6 @@ function firstString(...values: readonly unknown[]): string | undefined {
   }
 
   return undefined;
-}
-
-function workspaceBasename(workspace: string): string {
-  const normalized = workspace.trim().replace(/[\\/]+$/u, "");
-  const basename = normalized.split(/[\\/]/u).pop();
-  return basename !== undefined && basename.length > 0 ? basename : workspace;
 }
 
 function formatRawJson(value: string): string {

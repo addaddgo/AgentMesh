@@ -32,3 +32,4 @@ uploads/
 **node_modules**
 **dist**
 packages/
+workspace_test**

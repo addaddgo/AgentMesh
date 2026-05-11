@@ -2,8 +2,24 @@
   <section class="board-page">
     <Teleport to="#top-board-actions">
       <div class="top-board-control">
-        <el-button size="small" type="primary" @click="addDialogOpen = true">Add</el-button>
-        <el-button size="small" :loading="appServers.loading" @click="loadAll">Refresh</el-button>
+        <el-button
+          size="small"
+          type="primary"
+          :icon="Plus"
+          circle
+          title="Add thread"
+          aria-label="Add thread"
+          @click="addDialogOpen = true"
+        />
+        <el-button
+          size="small"
+          :icon="Refresh"
+          :loading="appServers.loading"
+          circle
+          title="Refresh"
+          aria-label="Refresh"
+          @click="loadAll"
+        />
       </div>
     </Teleport>
 
@@ -22,10 +38,12 @@
             :queue-items="queueItemsForLeaf(leaf)"
             :draft="draftForLeaf(leaf)"
             :focused="focusedThreadLeafId === leaf.id"
+            :resuming="isResumingLeaf(leaf)"
             @draft="setDraftForLeaf(leaf, $event)"
             @save-draft="saveDraftForLeaf(leaf)"
             @send="sendDraftForLeaf(leaf, $event)"
             @dropped="dropIntoLeaf(leaf, $event)"
+            @resume="resumeThreadForLeaf(leaf)"
             @close="closeThreadPane(leaf.id)"
           />
         </template>
@@ -36,14 +54,15 @@
 
     <el-dialog v-model="addDialogOpen" title="Add Thread" width="620px">
       <div class="dialog-toolbar">
-        <el-button :loading="appServers.loading" size="small" @click="loadAll">Refresh</el-button>
         <el-button
+          :icon="Refresh"
+          :loading="appServers.loading"
           size="small"
-          :disabled="selectedAppServerId === null"
-          @click="syncSelectedAppServer"
-        >
-          Sync Threads
-        </el-button>
+          circle
+          title="Refresh"
+          aria-label="Refresh"
+          @click="loadAll"
+        />
       </div>
       <div class="add-thread-dialog">
         <section>
@@ -63,16 +82,34 @@
               </span>
               <span class="dialog-actions">
                 <el-button
+                  size="small"
+                  :icon="RefreshRight"
+                  :disabled="server.status !== 'online'"
+                  circle
+                  title="Refresh threads"
+                  aria-label="Refresh threads"
+                  @click.stop="syncThreads(server.id)"
+                />
+                <el-button
                   v-if="server.status !== 'online'"
                   size="small"
                   type="primary"
+                  :icon="VideoPlay"
+                  circle
+                  title="Start app-server"
+                  aria-label="Start app-server"
                   @click.stop="appServers.start(server.id)"
-                >
-                  Start
-                </el-button>
-                <el-button v-else size="small" type="warning" @click.stop="appServers.stop(server.id)">
-                  Stop
-                </el-button>
+                />
+                <el-button
+                  v-else
+                  size="small"
+                  type="warning"
+                  :icon="VideoPause"
+                  circle
+                  title="Stop app-server"
+                  aria-label="Stop app-server"
+                  @click.stop="appServers.stop(server.id)"
+                />
               </span>
             </button>
           </div>
@@ -93,12 +130,14 @@
             <el-button
               size="small"
               type="primary"
+              :icon="CirclePlus"
+              circle
               native-type="submit"
               :loading="creatingThreadByAppServerId[selectedAppServerId] === true"
               :disabled="selectedAppServer?.status !== 'online'"
-            >
-              Create
-            </el-button>
+              title="Create thread"
+              aria-label="Create thread"
+            />
           </form>
           <div class="selection-list">
             <button
@@ -120,10 +159,22 @@
       </div>
       <template #footer>
         <div class="dialog-actions">
-          <el-button @click="addDialogOpen = false">Cancel</el-button>
-          <el-button type="primary" :disabled="selectedThread === null" @click="addSelectedThread">
-            Add
-          </el-button>
+          <el-button
+            :icon="Close"
+            circle
+            title="Cancel"
+            aria-label="Cancel"
+            @click="addDialogOpen = false"
+          />
+          <el-button
+            type="primary"
+            :icon="Select"
+            :disabled="selectedThread === null"
+            circle
+            title="Add selected thread"
+            aria-label="Add selected thread"
+            @click="addSelectedThread"
+          />
         </div>
       </template>
     </el-dialog>
@@ -131,6 +182,16 @@
 </template>
 
 <script setup lang="ts">
+import {
+  CirclePlus,
+  Close,
+  Plus,
+  Refresh,
+  RefreshRight,
+  Select,
+  VideoPause,
+  VideoPlay
+} from "@element-plus/icons-vue";
 import type {
   AppServerDto,
   AppServerStatus,
@@ -172,6 +233,7 @@ const selectedAppServerId = ref<string | null>(null);
 const selectedThreadId = ref<string | null>(null);
 const newThreadNameByAppServerId = ref<Record<string, string>>({});
 const creatingThreadByAppServerId = ref<Record<string, boolean>>({});
+const resumingThreadById = ref<Record<string, boolean>>({});
 const addDialogOpen = ref(false);
 
 const selectedAppServer = computed(() =>
@@ -288,12 +350,6 @@ async function syncThreads(appServerId: string): Promise<void> {
   refreshSelectedThread();
 }
 
-async function syncSelectedAppServer(): Promise<void> {
-  if (selectedAppServerId.value !== null) {
-    await syncThreads(selectedAppServerId.value);
-  }
-}
-
 async function openThreadData(thread: ThreadDto): Promise<void> {
   await threads.openThread(thread);
   await Promise.all([messages.load(thread.id), messages.loadQueue(thread.id)]);
@@ -364,6 +420,11 @@ function draftForLeaf(leaf: SplitPaneTree): string {
   return thread === null ? "" : (uiLayout.draftsByThreadId[thread.id]?.draftMarkdown ?? "");
 }
 
+function isResumingLeaf(leaf: SplitPaneTree): boolean {
+  const thread = threadForLeaf(leaf);
+  return thread !== null && resumingThreadById.value[thread.id] === true;
+}
+
 function setDraftForLeaf(leaf: SplitPaneTree, value: string): void {
   const thread = threadForLeaf(leaf);
   if (thread !== null) {
@@ -410,6 +471,29 @@ async function sendDraftForLeaf(
   payload.onSuccess();
 }
 
+async function resumeThreadForLeaf(leaf: SplitPaneTree): Promise<void> {
+  const thread = threadForLeaf(leaf);
+  if (thread === null || resumingThreadById.value[thread.id] === true) {
+    return;
+  }
+
+  resumingThreadById.value = {
+    ...resumingThreadById.value,
+    [thread.id]: true
+  };
+  try {
+    const resumed = await threads.resumeThread(thread);
+    if (resumed !== null) {
+      await Promise.all([messages.load(resumed.id), messages.loadQueue(resumed.id)]);
+    }
+  } finally {
+    resumingThreadById.value = {
+      ...resumingThreadById.value,
+      [thread.id]: false
+    };
+  }
+}
+
 function dropIntoLeaf(leaf: SplitPaneTree, text: string): void {
   const thread = threadForLeaf(leaf);
   if (thread === null) {
@@ -451,7 +535,7 @@ function serverById(appServerId: string): AppServerDto | null {
 }
 
 function appServerLabel(server: AppServerDto): string {
-  return `${server.host} / ${workspaceBasename(server.workspace)}`;
+  return `${server.host} / ${server.name}`;
 }
 
 function statusTagType(status: AppServerStatus): "success" | "warning" | "danger" | "info" {
@@ -524,9 +608,4 @@ function findLeafByPayload(
   return findLeafByPayload(tree.first, key, value) ?? findLeafByPayload(tree.second, key, value);
 }
 
-function workspaceBasename(workspace: string): string {
-  const normalized = workspace.trim().replace(/[\\/]+$/u, "");
-  const basename = normalized.split(/[\\/]/u).pop();
-  return basename !== undefined && basename.length > 0 ? basename : workspace;
-}
 </script>

@@ -29,6 +29,7 @@
     <div class="actions">
       <el-button
         type="success"
+        :icon="Check"
         :disabled="actionsDisabled"
         :loading="responding"
         @click="$emit('respond', approval.id, 'approve')"
@@ -37,6 +38,7 @@
       </el-button>
       <el-button
         type="danger"
+        :icon="CloseBold"
         :disabled="actionsDisabled"
         :loading="responding"
         @click="$emit('respond', approval.id, 'deny')"
@@ -48,6 +50,7 @@
 </template>
 
 <script setup lang="ts">
+import { Check, CloseBold } from "@element-plus/icons-vue";
 import type { ApprovalDecision, ApprovalDto } from "@agentmesh/shared";
 import { computed } from "vue";
 

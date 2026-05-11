@@ -486,14 +486,11 @@ textarea {
 .thread-panel {
   display: flex;
   flex-direction: column;
-  min-width: 380px;
+  min-width: 0;
   width: 100%;
-  max-width: 100%;
   height: 100%;
-  max-height: 100%;
   min-height: 0;
-  overflow: auto;
-  resize: both;
+  overflow: hidden;
 }
 
 .thread-header {
@@ -679,17 +676,55 @@ textarea {
   outline-offset: -2px;
 }
 
+.markdown-editor .cm-gutters {
+  display: none;
+}
+
 .markdown-editor .cm-scroller {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
-.markdown-preview {
-  max-height: 260px;
-  overflow: auto;
-  padding: 0.85rem;
-  border: 1px dashed rgba(47, 125, 85, 0.35);
-  border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.58);
+.cm-tooltip-autocomplete {
+  overflow: hidden;
+  min-width: 13rem;
+  max-width: min(28rem, 80vw);
+  border: 1px solid rgba(47, 125, 85, 0.24) !important;
+  border-radius: 0.8rem;
+  background: rgba(255, 252, 242, 0.98) !important;
+  box-shadow: 0 18px 44px rgba(23, 32, 27, 0.16);
+}
+
+.cm-tooltip-autocomplete ul {
+  max-height: 15rem;
+  padding: 0.25rem;
+  font-family: inherit;
+}
+
+.cm-tooltip-autocomplete li[aria-selected] {
+  border-radius: 0.55rem;
+  background: rgba(47, 125, 85, 0.14) !important;
+  color: #17201b !important;
+}
+
+.cm-completionLabel {
+  display: inline-block;
+  max-width: 10rem;
+  overflow: hidden;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.cm-completionDetail {
+  display: inline-block;
+  max-width: 14rem;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
 }
 
 .composer-drop-feedback {
@@ -788,12 +823,11 @@ pre {
   height: 100%;
   min-width: 0;
   min-height: 0;
-  gap: 0.5rem;
+  overflow: hidden;
 }
 
 .split-node.horizontal {
   flex-direction: row;
-  overflow-x: auto;
 }
 
 .split-node.vertical {
@@ -808,16 +842,20 @@ pre {
 
 .split-child {
   display: flex;
+  overflow: hidden;
 }
 
 .split-leaf {
+  display: flex;
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 .split-gutter {
   position: relative;
-  flex: 0 0 0.65rem;
+  flex: 0 0 0.5rem;
+  margin: 0 0.25rem;
   border-radius: 999px;
   background: rgba(23, 32, 27, 0.1);
   cursor: col-resize;
@@ -832,7 +870,9 @@ pre {
 }
 
 .split-node.vertical > .split-gutter {
-  min-height: 0.65rem;
+  flex-basis: 0.5rem;
+  min-height: 0.5rem;
+  margin: 0.25rem 0;
   cursor: row-resize;
 }
 

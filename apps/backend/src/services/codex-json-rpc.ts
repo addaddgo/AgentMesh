@@ -90,6 +90,7 @@ export type CodexSshTransportOptions = {
   readonly host: string;
   readonly workspace: string;
   readonly command: string;
+  readonly env?: Readonly<Record<string, string>> | undefined;
   readonly user?: string | null | undefined;
   readonly port?: number | null | undefined;
   readonly requestTimeoutMs?: number | undefined;
@@ -549,9 +550,20 @@ export function buildCodexSshCommand(options: CodexSshTransportOptions): {
     args: [
       ...(options.port === undefined || options.port === null ? [] : ["-p", String(options.port)]),
       target,
-      `cd ${shellQuote(workspace)} && exec ${command}`
+      `cd ${shellQuote(workspace)} && exec ${buildEnvPrefix(options.env)}${command}`
     ]
   };
+}
+
+function buildEnvPrefix(env: Readonly<Record<string, string>> | undefined): string {
+  const entries = Object.entries(env ?? {});
+  if (entries.length === 0) {
+    return "";
+  }
+
+  return `env ${entries
+    .map(([key, value]) => `${key}=${shellQuote(value)}`)
+    .join(" ")} `;
 }
 
 function validateSshField(value: string, pathName: string): string {

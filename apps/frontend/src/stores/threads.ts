@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 
 import { apiClient } from "../api/client";
 import { notifyError } from "./errors";
+import { useMessageStore } from "./messages";
 
 type ThreadState = {
   byAppServerId: Record<string, ThreadDto[]>;
@@ -84,6 +85,7 @@ export const useThreadStore = defineStore("threads", {
       try {
         const response = await apiClient.importThread(thread.id);
         this.upsertThread(response.thread);
+        useMessageStore().setThreadMessages(response.thread.id, response.messages);
       } catch (error) {
         notifyError(error, "Failed to import thread");
       }

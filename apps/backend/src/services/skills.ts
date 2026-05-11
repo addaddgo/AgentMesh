@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-import type { AppServerDto, SkillDto, SkillSyncResultDto } from "@agentmesh/shared";
+import type { AppServerDto, SkillDto, SkillSyncResultDto, TargetSkillDto } from "@agentmesh/shared";
 
 import type { BackendConfig } from "../config.js";
 import type { DatabaseHandle } from "../db/index.js";
@@ -88,6 +88,22 @@ export class SkillService {
     });
 
     return results;
+  }
+
+  public listTargetSkills(appServerId: string): TargetSkillDto[] {
+    const target = this.getAppServer(appServerId);
+    return target.hostKind === "ssh" ? listRemoteTargetSkills(target) : listLocalTargetSkills(target.workspace);
+  }
+
+  public deleteTargetSkill(appServerId: string, skillName: string): void {
+    validateSkillName(skillName);
+    const target = this.getAppServer(appServerId);
+    if (target.hostKind === "ssh") {
+      deleteRemoteTargetSkill(target, skillName);
+      return;
+    }
+
+    deleteLocalTargetSkill(target.workspace, skillName);
   }
 
   private syncOne(skill: SkillRecord, target: SkillCopyTarget): SkillSyncResultDto {
@@ -257,6 +273,126 @@ function copySkillToRemote(sourcePath: string, target: SkillCopyTarget, skillNam
   return destination;
 }
 
+function listLocalTargetSkills(workspace: string): TargetSkillDto[] {
+  const root = targetSkillsRoot(workspace);
+  let entries: fs.Dirent[];
+
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch (error) {
+    if (isNotFound(error)) {
+      return [];
+    }
+    throw new FilesystemError(errorMessage(error));
+  }
+
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .filter((entry) => SKILL_NAME_PATTERN.test(entry.name))
+    .map((entry) => {
+      const skillPath = path.posix.join(root, entry.name);
+      return { name: entry.name, path: skillPath, description: readLocalSkillDescription(skillPath) };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function listRemoteTargetSkills(target: SkillCopyTarget): TargetSkillDto[] {
+  const root = targetSkillsRoot(target.workspace);
+  const result = spawnSync(
+    "ssh",
+    [
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=10",
+      ...(target.sshPort === null ? [] : ["-p", String(target.sshPort)]),
+      remoteTarget(target),
+      `if [ -d ${shellQuote(root)} ]; then find ${shellQuote(root)} -mindepth 1 -maxdepth 1 -type d -printf '%f\\n'; fi`
+    ],
+    { encoding: "utf8" }
+  );
+
+  if (result.error !== undefined) {
+    throw new SshError(result.error.message);
+  }
+  if (result.status !== 0) {
+    throw new SshError(result.stderr.trim() || "ssh failed while listing target skills");
+  }
+
+  return result.stdout
+    .split(/\r?\n/u)
+    .filter((name) => name.length > 0 && SKILL_NAME_PATTERN.test(name))
+    .map((name) => {
+      const skillPath = path.posix.join(root, name);
+      return { name, path: skillPath, description: readRemoteSkillDescription(target, skillPath) };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function readLocalSkillDescription(skillPath: string): string {
+  const skillFile = path.join(skillPath, "SKILL.md");
+
+  try {
+    return parseFrontMatter(fs.readFileSync(skillFile, "utf8")).description ?? "";
+  } catch (error) {
+    if (isNotFound(error)) {
+      return "";
+    }
+    throw new FilesystemError(errorMessage(error));
+  }
+}
+
+function readRemoteSkillDescription(target: SkillCopyTarget, skillPath: string): string {
+  const result = spawnSync(
+    "ssh",
+    [
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=10",
+      ...(target.sshPort === null ? [] : ["-p", String(target.sshPort)]),
+      remoteTarget(target),
+      `if [ -f ${shellQuote(path.posix.join(skillPath, "SKILL.md"))} ]; then cat ${shellQuote(
+        path.posix.join(skillPath, "SKILL.md")
+      )}; fi`
+    ],
+    { encoding: "utf8" }
+  );
+
+  if (result.error !== undefined || result.status !== 0) {
+    return "";
+  }
+
+  return parseFrontMatter(result.stdout).description ?? "";
+}
+
+function deleteLocalTargetSkill(workspace: string, skillName: string): void {
+  const root = targetSkillsRoot(workspace);
+  const destination = targetSkillPath(workspace, skillName);
+  assertPathInside(root, destination, "Target skill must be under workspace .codex/skills");
+
+  try {
+    fs.rmSync(destination, { recursive: true, force: true });
+  } catch (error) {
+    throw new FilesystemError(errorMessage(error));
+  }
+}
+
+function deleteRemoteTargetSkill(target: SkillCopyTarget, skillName: string): void {
+  const root = targetSkillsRoot(target.workspace);
+  const destination = targetSkillPath(target.workspace, skillName);
+  const sshArgs = [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=10",
+    ...(target.sshPort === null ? [] : ["-p", String(target.sshPort)]),
+    remoteTarget(target),
+    `case ${shellQuote(destination)} in ${shellQuote(root)}/*) rm -rf ${shellQuote(destination)} ;; *) exit 2 ;; esac`
+  ];
+  runRemoteCommand("ssh", sshArgs);
+}
+
 function runRemoteCommand(command: "ssh" | "scp", args: readonly string[]): void {
   const result = spawnSync(command, args, { encoding: "utf8" });
 
@@ -273,7 +409,11 @@ function runRemoteCommand(command: "ssh" | "scp", args: readonly string[]): void
 
 function targetSkillPath(workspace: string, skillName: string): string {
   validateSkillName(skillName);
-  return path.posix.join(workspace, ".codex", "skills", skillName);
+  return path.posix.join(targetSkillsRoot(workspace), skillName);
+}
+
+function targetSkillsRoot(workspace: string): string {
+  return path.posix.join(workspace, ".codex", "skills");
 }
 
 function remoteTarget(target: SkillCopyTarget): string {

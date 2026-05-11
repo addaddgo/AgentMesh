@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import type { ThreadDto } from "@agentmesh/shared";
+import type { ThreadDto, ThreadRuntimeDto } from "@agentmesh/shared";
 
 import type { DatabaseHandle } from "../db/index.js";
 import { NotFoundError, ProtocolError } from "../errors.js";
 import type { JsonValue } from "./codex-json-rpc.js";
 import type { EventService } from "./events.js";
+import { buildThreadRuntime } from "./thread-runtime.js";
 
 type CodexRequester = {
   request<TResult extends JsonValue = JsonValue, TParams extends JsonValue = JsonValue>(
@@ -19,6 +20,10 @@ type ThreadRow = {
   readonly app_server_id: string;
   readonly codex_thread_id: string;
   readonly thread_name: string;
+  readonly agent_kind: "main" | "subagent";
+  readonly parent_thread_id: string | null;
+  readonly parent_codex_thread_id: string | null;
+  readonly agent_name: string | null;
   readonly title: string | null;
   readonly status: string | null;
   readonly cwd: string | null;
@@ -35,12 +40,19 @@ type AppServerWorkspaceRow = {
   readonly workspace: string;
 };
 
+type AppServerRuntimeRow = {
+  readonly status: string;
+};
+
 type CodexThread = {
   readonly codexThreadId: string;
   readonly threadName: string;
   readonly title: string | null;
   readonly status: string | null;
   readonly cwd: string | null;
+  readonly agentKind: "main" | "subagent";
+  readonly parentCodexThreadId: string | null;
+  readonly agentName: string | null;
   readonly raw: JsonValue;
 };
 
@@ -59,19 +71,63 @@ export class ThreadSyncService {
 
   public listCurrent(appServerId: string): ThreadDto[] {
     this.ensureAppServerExists(appServerId);
+    const appServerStatus = this.getAppServerStatus(appServerId);
 
     const rows = this.database.sqlite
       .prepare(
         `
           SELECT *
           FROM threads
-          WHERE app_server_id = ? AND is_current = 1
+          WHERE app_server_id = ? AND is_current = 1 AND agent_kind = 'main'
           ORDER BY thread_name ASC, created_at ASC
         `
       )
       .all(appServerId) as ThreadRow[];
 
-    return rows.map(toDto);
+    return rows.map((row) => this.toDto(row, appServerStatus));
+  }
+
+  public getById(threadId: string): ThreadDto {
+    const row = this.database.sqlite.prepare("SELECT * FROM threads WHERE id = ?").get(threadId) as
+      | ThreadRow
+      | undefined;
+
+    if (row === undefined) {
+      throw new NotFoundError("Thread not found");
+    }
+
+    return this.toDto(row, this.getAppServerStatus(row.app_server_id));
+  }
+
+  public findByCodexThreadId(appServerId: string, codexThreadId: string): ThreadDto | null {
+    const row = this.findByCodexThreadIdRow(appServerId, codexThreadId);
+    return row === undefined ? null : this.toDto(row, this.getAppServerStatus(appServerId));
+  }
+
+  public async materializeCodexThread(
+    appServerId: string,
+    requester: CodexRequester,
+    codexThreadId: string
+  ): Promise<ThreadDto | null> {
+    const existing = this.findByCodexThreadId(appServerId, codexThreadId);
+    if (existing !== null) {
+      return existing;
+    }
+
+    try {
+      const result = await requester.request("thread/read", {
+        threadId: codexThreadId,
+        includeTurns: false
+      });
+      if (!isRecord(result) || result.thread === undefined) {
+        return null;
+      }
+
+      this.upsertThreads(appServerId, [normalizeCodexThread(result.thread)]);
+      return this.findByCodexThreadId(appServerId, codexThreadId);
+    } catch {
+      return null;
+    }
   }
 
   public async sync(appServerId: string, requester: CodexRequester): Promise<SyncResult> {
@@ -110,13 +166,13 @@ export class ThreadSyncService {
 
     const namedThread = withThreadName(rawThread, name);
     this.upsertThreads(appServerId, [normalizeCodexThread(namedThread)]);
-    const thread = this.findByCodexThreadId(appServerId, codexThreadId);
+    const thread = this.findByCodexThreadIdRow(appServerId, codexThreadId);
 
     if (thread === undefined) {
       throw new ProtocolError("Codex thread/start did not create a local thread record");
     }
 
-    const dto = toDto(thread);
+    const dto = this.toDto(thread, this.getAppServerStatus(appServerId));
     this.events.publish({
       type: "thread.list_changed",
       appServerId,
@@ -142,13 +198,13 @@ export class ThreadSyncService {
     const result = await requester.request("thread/resume", { threadId: existing.codex_thread_id });
     const rawThread = extractResumedThread(result);
     this.upsertThreads(appServerId, [normalizeCodexThread(rawThread)]);
-    const resumed = this.findByCodexThreadId(appServerId, existing.codex_thread_id);
+    const resumed = this.findByCodexThreadIdRow(appServerId, existing.codex_thread_id);
 
     if (resumed === undefined) {
       throw new ProtocolError("Codex thread/resume did not update the local thread record");
     }
 
-    const dto = toDto(resumed);
+    const dto = this.toDto(resumed, this.getAppServerStatus(appServerId));
     this.events.publish({
       type: "thread.list_changed",
       appServerId,
@@ -199,7 +255,11 @@ export class ThreadSyncService {
         }
 
         seenCodexIds.add(thread.codexThreadId);
-        const existing = this.findByCodexThreadId(appServerId, thread.codexThreadId);
+        const existing = this.findByCodexThreadIdRow(appServerId, thread.codexThreadId);
+        const parentThreadId =
+          thread.parentCodexThreadId === null
+            ? null
+            : (this.findByCodexThreadIdRow(appServerId, thread.parentCodexThreadId)?.id ?? null);
 
         if (existing === undefined) {
           this.database.sqlite
@@ -210,6 +270,10 @@ export class ThreadSyncService {
                   app_server_id,
                   codex_thread_id,
                   thread_name,
+                  agent_kind,
+                  parent_thread_id,
+                  parent_codex_thread_id,
+                  agent_name,
                   title,
                   status,
                   cwd,
@@ -220,7 +284,7 @@ export class ThreadSyncService {
                   raw_metadata_json,
                   created_at,
                   updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, ?, ?, ?, ?)
               `
             )
             .run(
@@ -228,6 +292,10 @@ export class ThreadSyncService {
               appServerId,
               thread.codexThreadId,
               thread.threadName,
+              thread.agentKind,
+              parentThreadId,
+              thread.parentCodexThreadId,
+              thread.agentName,
               thread.title,
               thread.status,
               thread.cwd,
@@ -245,6 +313,10 @@ export class ThreadSyncService {
               UPDATE threads
               SET
                 thread_name = ?,
+                agent_kind = ?,
+                parent_thread_id = ?,
+                parent_codex_thread_id = ?,
+                agent_name = ?,
                 title = ?,
                 status = ?,
                 cwd = ?,
@@ -258,6 +330,10 @@ export class ThreadSyncService {
           )
           .run(
             thread.threadName,
+            thread.agentKind,
+            parentThreadId,
+            thread.parentCodexThreadId,
+            thread.agentName,
             thread.title,
             thread.status,
             thread.cwd,
@@ -267,10 +343,31 @@ export class ThreadSyncService {
             existing.id
           );
       }
+
+      this.resolveParentThreadIds(appServerId);
     });
 
     transaction();
     return seenCodexIds;
+  }
+
+  private resolveParentThreadIds(appServerId: string): void {
+    this.database.sqlite
+      .prepare(
+        `
+          UPDATE threads
+          SET parent_thread_id = (
+            SELECT parent.id
+            FROM threads AS parent
+            WHERE parent.app_server_id = threads.app_server_id
+              AND parent.codex_thread_id = threads.parent_codex_thread_id
+            LIMIT 1
+          )
+          WHERE app_server_id = ?
+            AND parent_codex_thread_id IS NOT NULL
+        `
+      )
+      .run(appServerId);
   }
 
   private markMissingGone(appServerId: string, seenCodexIds: ReadonlySet<string>): void {
@@ -307,7 +404,7 @@ export class ThreadSyncService {
     const rows = this.database.sqlite
       .prepare(
         `
-          SELECT codex_thread_id, thread_name, title, status, cwd
+          SELECT codex_thread_id, thread_name, agent_kind, parent_codex_thread_id, agent_name, title, status, cwd
           FROM threads
           WHERE app_server_id = ? AND is_current = 1
           ORDER BY codex_thread_id ASC
@@ -318,7 +415,10 @@ export class ThreadSyncService {
     return JSON.stringify(rows);
   }
 
-  private findByCodexThreadId(appServerId: string, codexThreadId: string): ThreadRow | undefined {
+  private findByCodexThreadIdRow(
+    appServerId: string,
+    codexThreadId: string
+  ): ThreadRow | undefined {
     return this.database.sqlite
       .prepare("SELECT * FROM threads WHERE app_server_id = ? AND codex_thread_id = ?")
       .get(appServerId, codexThreadId) as ThreadRow | undefined;
@@ -344,6 +444,22 @@ export class ThreadSyncService {
     }
 
     return row.workspace;
+  }
+
+  private getAppServerStatus(appServerId: string): string {
+    const row = this.database.sqlite
+      .prepare("SELECT status FROM app_servers WHERE id = ? LIMIT 1")
+      .get(appServerId) as AppServerRuntimeRow | undefined;
+
+    if (row === undefined) {
+      throw new NotFoundError("App server not found");
+    }
+
+    return row.status;
+  }
+
+  private toDto(row: ThreadRow, appServerStatus: string): ThreadDto {
+    return toDto(row, appServerStatus, buildThreadRuntime(this.database.sqlite, row));
   }
 }
 
@@ -397,6 +513,8 @@ function normalizeCodexThread(value: JsonValue): CodexThread {
 
   const title = firstString(value.title);
   const threadName = firstString(value.name, title, codexThreadId) ?? codexThreadId;
+  const parentCodexThreadId = readParentCodexThreadId(value);
+  const agentKind = parentCodexThreadId === null ? "main" : "subagent";
 
   return {
     codexThreadId,
@@ -404,8 +522,61 @@ function normalizeCodexThread(value: JsonValue): CodexThread {
     title: title ?? null,
     status: readThreadStatus(value),
     cwd: firstString(value.cwd, value.workspace) ?? null,
+    agentKind,
+    parentCodexThreadId,
+    agentName: readAgentName(value, agentKind),
     raw: value
   };
+}
+
+function readParentCodexThreadId(value: Record<string, JsonValue>): string | null {
+  return (
+    firstString(
+      readNestedString(value, ["source", "subAgent", "thread_spawn", "parent_thread_id"]),
+      readNestedString(value, ["source", "sub_agent", "thread_spawn", "parent_thread_id"]),
+      readNestedString(value, ["source", "subAgent", "threadSpawn", "parentThreadId"]),
+      readNestedString(value, ["source", "sub_agent", "threadSpawn", "parentThreadId"])
+    ) ?? null
+  );
+}
+
+function readAgentName(
+  value: Record<string, JsonValue>,
+  agentKind: "main" | "subagent"
+): string | null {
+  if (agentKind === "main") {
+    return "main agent";
+  }
+
+  return (
+    firstString(
+      value.agentNickname,
+      value.agent_nickname,
+      value.agentName,
+      value.agent_name,
+      value.agentRole,
+      value.agent_role,
+      readNestedString(value, ["source", "subAgent", "thread_spawn", "agent_nickname"]),
+      readNestedString(value, ["source", "sub_agent", "thread_spawn", "agent_nickname"]),
+      readNestedString(value, ["source", "subAgent", "threadSpawn", "agentNickname"]),
+      readNestedString(value, ["source", "sub_agent", "threadSpawn", "agentNickname"]),
+      readNestedString(value, ["source", "subAgent", "thread_spawn", "agent_role"]),
+      readNestedString(value, ["source", "sub_agent", "thread_spawn", "agent_role"]),
+      readNestedString(value, ["source", "subAgent", "threadSpawn", "agentRole"]),
+      readNestedString(value, ["source", "sub_agent", "threadSpawn", "agentRole"])
+    ) ?? "subagent"
+  );
+}
+
+function readNestedString(value: unknown, path: readonly string[]): string | undefined {
+  let cursor = value;
+  for (const key of path) {
+    if (!isRecord(cursor)) {
+      return undefined;
+    }
+    cursor = cursor[key];
+  }
+  return typeof cursor === "string" && cursor.trim().length > 0 ? cursor.trim() : undefined;
 }
 
 function readThreadStatus(value: Record<string, JsonValue>): string | null {
@@ -469,20 +640,25 @@ function withThreadName(value: JsonValue, name: string): JsonValue {
   };
 }
 
-function toDto(row: ThreadRow): ThreadDto {
+function toDto(row: ThreadRow, appServerStatus: string, runtime: ThreadRuntimeDto): ThreadDto {
   return {
     id: row.id,
     appServerId: row.app_server_id,
     codexThreadId: row.codex_thread_id,
     threadName: row.thread_name,
+    agentKind: row.agent_kind,
+    parentThreadId: row.parent_thread_id,
+    parentCodexThreadId: row.parent_codex_thread_id,
+    agentName: row.agent_name,
     title: row.title,
-    status: row.status,
+    status: appServerStatus === "online" ? (row.status ?? "idle") : "notLoaded",
     cwd: row.cwd,
     isCurrent: row.is_current === 1,
     isGone: row.is_gone === 1,
     importedAt: row.imported_at,
     lastSeenAt: row.last_seen_at,
     rawMetadata: JSON.parse(row.raw_metadata_json) as unknown,
+    runtime,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

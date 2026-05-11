@@ -228,6 +228,95 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS thread_drafts_thread_idx
         ON thread_drafts (thread_id);
     `
+  },
+  {
+    id: "0002_app_server_environment",
+    sql: `
+      ALTER TABLE app_servers
+        ADD COLUMN environment_json TEXT NOT NULL DEFAULT '{}';
+    `
+  },
+  {
+    id: "0003_thread_settings",
+    sql: `
+      CREATE TABLE IF NOT EXISTS thread_settings (
+        thread_id TEXT PRIMARY KEY NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        model TEXT,
+        effort TEXT,
+        approval_policy_json TEXT,
+        sandbox_policy_json TEXT,
+        collaboration_mode_json TEXT,
+        updated_at INTEGER NOT NULL
+      );
+    `
+  },
+  {
+    id: "0004_thread_agent_relationships",
+    sql: `
+      ALTER TABLE threads
+        ADD COLUMN agent_kind TEXT NOT NULL DEFAULT 'main' CHECK (agent_kind IN ('main', 'subagent'));
+
+      ALTER TABLE threads
+        ADD COLUMN parent_thread_id TEXT;
+
+      ALTER TABLE threads
+        ADD COLUMN parent_codex_thread_id TEXT;
+
+      ALTER TABLE threads
+        ADD COLUMN agent_name TEXT;
+
+      CREATE INDEX IF NOT EXISTS threads_agent_family_idx
+        ON threads (app_server_id, agent_kind, parent_thread_id);
+
+      CREATE INDEX IF NOT EXISTS threads_parent_codex_idx
+        ON threads (app_server_id, parent_codex_thread_id);
+
+      UPDATE threads
+      SET
+        parent_codex_thread_id = COALESCE(
+          json_extract(raw_metadata_json, '$.source.subAgent.thread_spawn.parent_thread_id'),
+          json_extract(raw_metadata_json, '$.source.sub_agent.thread_spawn.parent_thread_id'),
+          json_extract(raw_metadata_json, '$.source.subAgent.threadSpawn.parentThreadId'),
+          json_extract(raw_metadata_json, '$.source.sub_agent.threadSpawn.parentThreadId')
+        ),
+        agent_name = COALESCE(
+          json_extract(raw_metadata_json, '$.agentNickname'),
+          json_extract(raw_metadata_json, '$.agent_nickname'),
+          json_extract(raw_metadata_json, '$.agentName'),
+          json_extract(raw_metadata_json, '$.agent_name'),
+          json_extract(raw_metadata_json, '$.agentRole'),
+          json_extract(raw_metadata_json, '$.agent_role'),
+          json_extract(raw_metadata_json, '$.source.subAgent.thread_spawn.agent_nickname'),
+          json_extract(raw_metadata_json, '$.source.sub_agent.thread_spawn.agent_nickname'),
+          json_extract(raw_metadata_json, '$.source.subAgent.threadSpawn.agentNickname'),
+          json_extract(raw_metadata_json, '$.source.sub_agent.threadSpawn.agentNickname'),
+          json_extract(raw_metadata_json, '$.source.subAgent.thread_spawn.agent_role'),
+          json_extract(raw_metadata_json, '$.source.sub_agent.thread_spawn.agent_role'),
+          json_extract(raw_metadata_json, '$.source.subAgent.threadSpawn.agentRole'),
+          json_extract(raw_metadata_json, '$.source.sub_agent.threadSpawn.agentRole')
+        );
+
+      UPDATE threads
+      SET
+        agent_kind = CASE
+          WHEN parent_codex_thread_id IS NULL THEN 'main'
+          ELSE 'subagent'
+        END,
+        agent_name = CASE
+          WHEN parent_codex_thread_id IS NULL THEN COALESCE(agent_name, 'main agent')
+          ELSE COALESCE(agent_name, 'subagent')
+        END;
+
+      UPDATE threads
+      SET parent_thread_id = (
+        SELECT parent.id
+        FROM threads AS parent
+        WHERE parent.app_server_id = threads.app_server_id
+          AND parent.codex_thread_id = threads.parent_codex_thread_id
+        LIMIT 1
+      )
+      WHERE parent_codex_thread_id IS NOT NULL;
+    `
   }
 ];
 

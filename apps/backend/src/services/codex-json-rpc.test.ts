@@ -187,6 +187,22 @@ describe("CodexJsonRpcTransport", () => {
     });
   });
 
+  it("injects SSH app-server environment variables without relying on shell profiles", () => {
+    expect(
+      buildCodexSshCommand({
+        host: "remote.example.com",
+        workspace: "/srv/project",
+        command: "codex app-server",
+        env: {
+          OPENAI_API_KEY: "sk-test value",
+          HTTPS_PROXY: "http://127.0.0.1:7890"
+        }
+      }).args.at(-1)
+    ).toBe(
+      "cd '/srv/project' && exec env OPENAI_API_KEY='sk-test value' HTTPS_PROXY='http://127.0.0.1:7890' codex app-server"
+    );
+  });
+
   it("rejects incomplete SSH command configuration", () => {
     expect(() =>
       buildCodexSshCommand({

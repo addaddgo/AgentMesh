@@ -19,6 +19,7 @@ export type CreateAppServerInput = {
   readonly sshPort?: number | undefined;
   readonly workspace: string;
   readonly command?: string | undefined;
+  readonly environment?: Record<string, string> | undefined;
 };
 
 export type PatchAppServerInput = Partial<CreateAppServerInput>;
@@ -32,6 +33,7 @@ type AppServerRow = {
   readonly ssh_port: number | null;
   readonly workspace: string;
   readonly command: string;
+  readonly environment_json: string;
   readonly status: AppServerDto["status"];
   readonly last_started_at: number | null;
   readonly last_seen_at: number | null;
@@ -48,6 +50,7 @@ type NormalizedAppServerConfig = {
   readonly sshPort: number | null;
   readonly workspace: string;
   readonly command: string;
+  readonly environment: Readonly<Record<string, string>>;
 };
 
 export class AppServerService {
@@ -85,11 +88,12 @@ export class AppServerService {
             ssh_port,
             workspace,
             command,
+            environment_json,
             status,
             last_error,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'offline', NULL, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', NULL, ?, ?)
         `
       )
       .run(
@@ -101,6 +105,7 @@ export class AppServerService {
         config.sshPort,
         config.workspace,
         config.command,
+        JSON.stringify(config.environment),
         now,
         now
       );
@@ -125,7 +130,9 @@ export class AppServerService {
       sshPort:
         nextHostKind === "ssh" ? (input.sshPort ?? existing.ssh_port ?? undefined) : undefined,
       workspace: input.workspace ?? existing.workspace,
-      command: input.command ?? existing.command
+      command: input.command ?? existing.command,
+      environment:
+        input.environment ?? (JSON.parse(existing.environment_json) as Record<string, string>)
     };
     const config = normalizeConfig(mergedInput);
 
@@ -145,6 +152,7 @@ export class AppServerService {
             ssh_port = ?,
             workspace = ?,
             command = ?,
+            environment_json = ?,
             updated_at = ?
           WHERE id = ?
         `
@@ -157,6 +165,7 @@ export class AppServerService {
         config.sshPort,
         config.workspace,
         config.command,
+        JSON.stringify(config.environment),
         Date.now(),
         id
       );
@@ -299,6 +308,7 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
   const hostKind = input.hostKind;
   const workspace = normalizeWorkspace(input.workspace);
   const command = input.command?.trim() || DEFAULT_COMMAND;
+  const environment = normalizeEnvironment(input.environment ?? {});
   const name = input.name?.trim() ?? workspaceBaseName(workspace);
 
   validateName(name);
@@ -320,7 +330,8 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
       sshUser: null,
       sshPort: null,
       workspace,
-      command
+      command,
+      environment
     };
   }
 
@@ -339,7 +350,8 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
     sshUser: normalizeNullableText(input.sshUser),
     sshPort: input.sshPort ?? null,
     workspace,
-    command
+    command,
+    environment
   };
 }
 
@@ -386,6 +398,43 @@ function normalizeNullableText(value: string | undefined): string | null {
   return trimmed === undefined || trimmed.length === 0 ? null : trimmed;
 }
 
+function normalizeEnvironment(value: Record<string, string>): Readonly<Record<string, string>> {
+  const entries = Object.entries(value)
+    .map(([key, rawValue]) => [key.trim(), String(rawValue)] as const)
+    .filter(([key]) => key.length > 0);
+  const normalized: Record<string, string> = {};
+
+  for (const [key, envValue] of entries) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
+      throw new RequestValidationError("App server environment is invalid", [
+        {
+          path: ["environment", key],
+          message: "Environment variable names must match [A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]);
+    }
+
+    if (key.includes("\0") || envValue.includes("\0")) {
+      throw new RequestValidationError("App server environment is invalid", [
+        { path: ["environment", key], message: "Environment cannot contain NUL bytes" }
+      ]);
+    }
+
+    normalized[key] = envValue;
+  }
+
+  return normalized;
+}
+
+function parseEnvironmentJson(value: string): Readonly<Record<string, string>> {
+  const parsed = JSON.parse(value) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return {};
+  }
+
+  return normalizeEnvironment(parsed as Record<string, string>);
+}
+
 function toDto(row: AppServerRow): AppServerDto {
   return {
     id: row.id,
@@ -396,6 +445,7 @@ function toDto(row: AppServerRow): AppServerDto {
     sshPort: row.ssh_port,
     workspace: row.workspace,
     command: row.command,
+    environment: parseEnvironmentJson(row.environment_json),
     status: row.status,
     lastStartedAt: row.last_started_at,
     lastSeenAt: row.last_seen_at,

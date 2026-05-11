@@ -67,6 +67,14 @@ type TurnRow = {
   readonly updated_at: number;
 };
 
+type ThreadSettingsRow = {
+  readonly model: string | null;
+  readonly effort: string | null;
+  readonly approval_policy_json: string | null;
+  readonly sandbox_policy_json: string | null;
+  readonly collaboration_mode_json: string | null;
+};
+
 type SendPayload = {
   readonly messageId: string;
   readonly turnId: string;
@@ -556,15 +564,44 @@ export class MessageSendService {
   ): Promise<JsonValue> {
     return transport.requestObserved(
       "turn/start",
-      {
+      withDefinedValues({
         threadId: payload.codexThreadId,
-        input
-      } satisfies JsonValue,
+        input,
+        ...this.getThreadSettings(item.threadId)
+      }) satisfies JsonValue,
       (response, rawLine, method) => {
         this.storeCodexObservedEvent(item, turnId, response, rawLine, `${method}.response`);
       }
     );
   }
+
+  private getThreadSettings(threadId: string): Record<string, JsonValue | undefined> {
+    const row = this.database.sqlite
+      .prepare("SELECT * FROM thread_settings WHERE thread_id = ?")
+      .get(threadId) as ThreadSettingsRow | undefined;
+
+    if (row === undefined) {
+      return {};
+    }
+
+    return {
+      model: row.model ?? undefined,
+      effort: row.effort ?? undefined,
+      approvalPolicy: parseJsonValue(row.approval_policy_json),
+      sandboxPolicy: parseJsonValue(row.sandbox_policy_json),
+      collaborationMode: parseJsonValue(row.collaboration_mode_json)
+    };
+  }
+}
+
+function withDefinedValues(input: Record<string, JsonValue | undefined>): JsonValue {
+  return Object.fromEntries(
+    Object.entries(input).filter((entry): entry is [string, JsonValue] => entry[1] !== undefined)
+  );
+}
+
+function parseJsonValue(value: string | null): JsonValue | undefined {
+  return value === null ? undefined : (JSON.parse(value) as JsonValue);
 }
 
 function notificationMatchesTurn(
@@ -623,6 +660,13 @@ function extractTurnCompletion(notification: unknown): TurnCompletion | null {
   const status = firstString(turn.status, params.status)?.toLowerCase();
   const error = turn.error ?? params.error;
 
+  if (method === "error" && isTerminalCodexError(params)) {
+    return {
+      status: "failed",
+      error: stringifyError(error ?? "Codex turn failed")
+    };
+  }
+
   if (
     method.includes("turn") &&
     (method.includes("completed") || status === "completed" || status === "failed")
@@ -634,6 +678,21 @@ function extractTurnCompletion(notification: unknown): TurnCompletion | null {
   }
 
   return null;
+}
+
+function isTerminalCodexError(params: Record<string, unknown>): boolean {
+  if (params.willRetry === false) {
+    return true;
+  }
+
+  const error = isRecord(params.error) ? params.error : {};
+  const message = firstString(error.message, params.message)?.toLowerCase();
+  if (message === undefined) {
+    return false;
+  }
+
+  const reconnecting = /reconnecting\.\.\.\s*(\d+)\/(\d+)/u.exec(message);
+  return reconnecting !== null && reconnecting[1] === reconnecting[2];
 }
 
 function isCompletedTurnStartResult(result: unknown): boolean {

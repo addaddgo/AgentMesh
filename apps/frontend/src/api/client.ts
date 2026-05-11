@@ -7,8 +7,15 @@ import type {
   ApprovalListResponse,
   ApprovalRespondResponse,
   ChatMessage,
+  CodexCommandDto,
+  CodexCommandApplyRequest,
+  CodexCommandApplyResponse,
+  CodexCommandListResponse,
+  CodexCommandOptionDto,
+  CodexCommandOptionListResponse,
   CodexEventDto,
   CodexEventListResponse,
+  CodexSkillListResponse,
   SendMessageResponse,
   SendTextMessageRequest,
   SkillDto,
@@ -28,9 +35,14 @@ import type {
   ThreadQueueResponse,
   ThreadResumeResponse,
   ThreadSyncResponse,
+  TargetSkillDto,
+  TargetSkillListResponse,
+  TargetSkillDeleteResponse,
   UiLayoutListResponse,
   UiLayoutPutRequest,
   UiLayoutPutResponse,
+  WorkspaceEntryDto,
+  WorkspaceEntryListResponse,
   UploadImageResponse
 } from "@agentmesh/shared";
 
@@ -53,6 +65,7 @@ export type CreateAppServerPayload = {
   readonly sshPort?: number;
   readonly workspace: string;
   readonly command?: string;
+  readonly environment?: Record<string, string>;
 };
 
 export type PatchAppServerPayload = Partial<CreateAppServerPayload>;
@@ -112,6 +125,59 @@ export class ApiClient {
     return response.threads;
   }
 
+  public async listWorkspaceEntries(
+    appServerId: string,
+    query: string
+  ): Promise<readonly WorkspaceEntryDto[]> {
+    const response = await this.request<WorkspaceEntryListResponse>(
+      `/api/app-servers/${encodeURIComponent(appServerId)}/workspace/entries?query=${encodeURIComponent(query)}`
+    );
+    return response.entries;
+  }
+
+  public async listCodexSkills(appServerId: string): Promise<readonly SkillDto[]> {
+    const response = await this.request<CodexSkillListResponse>(
+      `/api/app-servers/${encodeURIComponent(appServerId)}/codex-skills`
+    );
+    return response.skills;
+  }
+
+  public async listCodexCommands(appServerId: string): Promise<readonly CodexCommandDto[]> {
+    const response = await this.request<CodexCommandListResponse>(
+      `/api/app-servers/${encodeURIComponent(appServerId)}/codex-commands`
+    );
+    return response.commands;
+  }
+
+  public async listCodexCommandOptions(
+    appServerId: string,
+    command: string,
+    threadId?: string
+  ): Promise<readonly CodexCommandOptionDto[]> {
+    const params = new URLSearchParams({ command });
+    if (threadId !== undefined) {
+      params.set("threadId", threadId);
+    }
+
+    const response = await this.request<CodexCommandOptionListResponse>(
+      `/api/app-servers/${encodeURIComponent(appServerId)}/codex-command-options?${params.toString()}`
+    );
+    return response.options;
+  }
+
+  public async applyCodexCommandSelection(
+    threadId: string,
+    payload: CodexCommandApplyRequest
+  ): Promise<CodexCommandApplyResponse> {
+    return this.request<CodexCommandApplyResponse>(
+      `/api/threads/${encodeURIComponent(threadId)}/codex-command-selection`,
+      {
+        method: "POST",
+        body: payload
+      }
+    );
+  }
+
   public syncThreads(appServerId: string): Promise<ThreadSyncResponse> {
     return this.request<ThreadSyncResponse>(
       `/api/app-servers/${encodeURIComponent(appServerId)}/threads/sync`,
@@ -141,6 +207,17 @@ export class ApiClient {
   public async getThread(threadId: string): Promise<ThreadDto> {
     const response = await this.request<ThreadDetailResponse>(
       `/api/threads/${encodeURIComponent(threadId)}`
+    );
+    return response.thread;
+  }
+
+  public async renameThread(threadId: string, name: string): Promise<ThreadDto> {
+    const response = await this.request<ThreadDetailResponse>(
+      `/api/threads/${encodeURIComponent(threadId)}/name`,
+      {
+        method: "PATCH",
+        body: { name }
+      }
     );
     return response.thread;
   }
@@ -234,6 +311,23 @@ export class ApiClient {
       method: "POST",
       body: payload
     });
+  }
+
+  public async listTargetSkills(appServerId: string): Promise<readonly TargetSkillDto[]> {
+    const response = await this.request<TargetSkillListResponse>(
+      `/api/app-servers/${encodeURIComponent(appServerId)}/target-skills`
+    );
+    return response.skills;
+  }
+
+  public deleteTargetSkill(
+    appServerId: string,
+    skillName: string
+  ): Promise<TargetSkillDeleteResponse> {
+    return this.request<TargetSkillDeleteResponse>(
+      `/api/app-servers/${encodeURIComponent(appServerId)}/target-skills/${encodeURIComponent(skillName)}`,
+      { method: "DELETE" }
+    );
   }
 
   public async listUiLayouts(): Promise<UiLayoutListResponse> {

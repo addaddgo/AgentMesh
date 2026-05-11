@@ -23,6 +23,7 @@ export const appServers = sqliteTable(
     sshPort: integer("ssh_port"),
     workspace: text("workspace").notNull(),
     command: text("command").notNull(),
+    environmentJson: text("environment_json").notNull().default("{}"),
     status: text("status", {
       enum: ["offline", "starting", "online", "stopping", "error"]
     }).notNull(),
@@ -48,6 +49,12 @@ export const threads = sqliteTable(
       .references(() => appServers.id, { onDelete: "cascade" }),
     codexThreadId: text("codex_thread_id").notNull(),
     threadName: text("thread_name").notNull(),
+    agentKind: text("agent_kind", { enum: ["main", "subagent"] })
+      .notNull()
+      .default("main"),
+    parentThreadId: text("parent_thread_id"),
+    parentCodexThreadId: text("parent_codex_thread_id"),
+    agentName: text("agent_name"),
     title: text("title"),
     status: text("status"),
     cwd: text("cwd"),
@@ -70,7 +77,9 @@ export const threads = sqliteTable(
       table.threadName
     ),
     index("threads_app_server_gone_idx").on(table.appServerId, table.isGone),
-    index("threads_thread_name_idx").on(table.appServerId, table.threadName)
+    index("threads_thread_name_idx").on(table.appServerId, table.threadName),
+    index("threads_agent_family_idx").on(table.appServerId, table.agentKind, table.parentThreadId),
+    index("threads_parent_codex_idx").on(table.appServerId, table.parentCodexThreadId)
   ]
 );
 
@@ -92,6 +101,18 @@ export const threadImports = sqliteTable(
     index("thread_imports_app_server_idx").on(table.appServerId, table.importedAt)
   ]
 );
+
+export const threadSettings = sqliteTable("thread_settings", {
+  threadId: text("thread_id")
+    .primaryKey()
+    .references(() => threads.id, { onDelete: "cascade" }),
+  model: text("model"),
+  effort: text("effort"),
+  approvalPolicyJson: text("approval_policy_json"),
+  sandboxPolicyJson: text("sandbox_policy_json"),
+  collaborationModeJson: text("collaboration_mode_json"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()
+});
 
 export const turns = sqliteTable(
   "turns",

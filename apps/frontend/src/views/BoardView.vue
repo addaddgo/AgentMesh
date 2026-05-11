@@ -23,14 +23,15 @@
       </div>
     </Teleport>
 
-    <main class="board-surface thread-canvas">
-      <SplitPaneNode
-        v-if="boardTree !== null"
-        :tree="boardTree"
-        @focus-leaf="focusThreadPane"
-        @update-tree="updateBoardTree"
-      >
-        <template #leaf="{ leaf }">
+    <main class="thread-canvas">
+      <div v-if="threadLeaves.length > 0" class="thread-card-flow">
+        <article
+          v-for="leaf in threadLeaves"
+          :key="leaf.id"
+          class="thread-card"
+          :class="{ focused: focusedThreadLeafId === leaf.id }"
+          @mousedown="focusThreadPane(leaf.id)"
+        >
           <ThreadPanel
             :app-server="appServerForThreadLeaf(leaf)"
             :thread="threadForLeaf(leaf)"
@@ -44,15 +45,18 @@
             @send="sendDraftForLeaf(leaf, $event)"
             @dropped="dropIntoLeaf(leaf, $event)"
             @resume="resumeThreadForLeaf(leaf)"
+            @switch-thread="switchLeafThread(leaf, $event)"
+            @settings-updated="refreshThreadForLeaf(leaf)"
+            @thread-updated="threads.upsertThread($event)"
             @close="closeThreadPane(leaf.id)"
           />
-        </template>
-      </SplitPaneNode>
+        </article>
+      </div>
 
       <el-empty v-else description="Click Add, then select an app-server and thread." />
     </main>
 
-    <el-dialog v-model="addDialogOpen" title="Add Thread" width="620px">
+    <el-dialog v-model="addDialogOpen" title="Add Thread" width="860px">
       <div class="dialog-toolbar">
         <el-button
           :icon="Refresh"
@@ -78,7 +82,9 @@
             >
               <span class="selection-card-title">
                 <strong>{{ appServerLabel(server) }}</strong>
-                <el-tag :type="statusTagType(server.status)" size="small">{{ server.status }}</el-tag>
+                <el-tag :type="statusTagType(server.status)" size="small">{{
+                  server.status
+                }}</el-tag>
               </span>
               <span class="dialog-actions">
                 <el-button
@@ -151,7 +157,7 @@
               <span class="selection-card-title">
                 <strong>{{ thread.threadName }}</strong>
                 <el-tag v-if="thread.isGone" size="small" type="danger">gone</el-tag>
-                <el-tag v-else size="small">{{ thread.status ?? "current" }}</el-tag>
+                <el-tag v-else size="small">{{ thread.status ?? "idle" }}</el-tag>
               </span>
             </button>
           </div>
@@ -202,7 +208,6 @@ import type {
 } from "@agentmesh/shared";
 import { computed, onMounted, ref } from "vue";
 
-import SplitPaneNode from "../components/SplitPaneNode.vue";
 import ThreadPanel from "../components/ThreadPanel.vue";
 import { apiClient } from "../api/client";
 import { useAppServerStore } from "../stores/appServers";
@@ -213,7 +218,6 @@ import {
   firstLeafId,
   leafPayloadIds,
   removeLeaf,
-  splitLeaf,
   useUiLayoutStore
 } from "../stores/uiLayout";
 import { appendDroppedText } from "../utils/messageDragDrop";
@@ -245,6 +249,7 @@ const selectedAppServerThreads = computed(() =>
 const selectedThread = computed(() =>
   selectedThreadId.value === null ? null : threads.threadById(selectedThreadId.value)
 );
+const threadLeaves = computed(() => collectThreadLeaves(boardTree.value));
 
 onMounted(() => {
   void loadAll();
@@ -265,7 +270,9 @@ async function loadAll(): Promise<void> {
     persisted !== null && leafPayloadIds(persisted, "threadId").length > 0 ? persisted : null;
   focusedThreadLeafId.value = firstLeafId(boardTree.value);
 
-  await Promise.all(leafPayloadIds(boardTree.value, "threadId").map((threadId) => restoreThread(threadId)));
+  await Promise.all(
+    leafPayloadIds(boardTree.value, "threadId").map((threadId) => restoreThread(threadId))
+  );
   focusThreadPane(focusedThreadLeafId.value);
 }
 
@@ -302,15 +309,15 @@ async function addThreadPane(thread: ThreadDto): Promise<void> {
     return;
   }
 
-  const targetLeafId =
-    lastLeafIdForAppServer(boardTree.value, thread.appServerId) ?? focusedThreadLeafId.value;
-  const direction = autoPlacementDirection(boardTree.value, thread.appServerId);
-  boardTree.value = splitLeaf(
-    boardTree.value,
-    targetLeafId,
-    createLeaf(crypto.randomUUID(), { threadId: thread.id }),
-    direction
-  );
+  const nextLeaf = createLeaf(crypto.randomUUID(), { threadId: thread.id }) as SplitPaneLeaf;
+  const leaves = collectThreadLeaves(boardTree.value);
+  const insertIndex = lastLeafIndexForAppServer(leaves, thread.appServerId);
+  const nextLeaves =
+    insertIndex === -1
+      ? [...leaves, nextLeaf]
+      : [...leaves.slice(0, insertIndex + 1), nextLeaf, ...leaves.slice(insertIndex + 1)];
+
+  boardTree.value = buildLinearThreadTree(nextLeaves);
   focusedThreadLeafId.value = findLeafByPayload(boardTree.value, "threadId", thread.id)?.id ?? null;
   await persistBoardTree();
   await openThreadData(thread);
@@ -364,11 +371,6 @@ async function closeThreadPane(leafId: string): Promise<void> {
   focusedThreadLeafId.value = firstLeafId(boardTree.value);
   await persistBoardTree();
   focusThreadPane(focusedThreadLeafId.value);
-}
-
-function updateBoardTree(tree: SplitPaneTree): void {
-  boardTree.value = tree;
-  void persistBoardTree();
 }
 
 function focusThreadPane(leafId: string | null): void {
@@ -442,6 +444,7 @@ async function saveDraftForLeaf(leaf: SplitPaneTree): Promise<void> {
 async function sendDraftForLeaf(
   leaf: SplitPaneTree,
   payload: {
+    readonly draftMarkdown: string;
     readonly attachmentIds: readonly string[];
     readonly onSuccess: () => void;
   }
@@ -451,7 +454,7 @@ async function sendDraftForLeaf(
     return;
   }
 
-  const draft = draftForLeaf(leaf).trim();
+  const draft = payload.draftMarkdown.trim();
   const appServer = serverById(thread.appServerId);
   if (
     (draft.length === 0 && payload.attachmentIds.length === 0) ||
@@ -482,8 +485,20 @@ async function resumeThreadForLeaf(leaf: SplitPaneTree): Promise<void> {
     [thread.id]: true
   };
   try {
+    const appServer = serverById(thread.appServerId);
+    if (appServer === null) {
+      return;
+    }
+    if (appServer.status !== "online") {
+      await appServers.start(appServer.id);
+      if (serverById(thread.appServerId)?.status !== "online") {
+        return;
+      }
+    }
+
     const resumed = await threads.resumeThread(thread);
     if (resumed !== null) {
+      await threads.openThread(resumed);
       await Promise.all([messages.load(resumed.id), messages.loadQueue(resumed.id)]);
     }
   } finally {
@@ -522,6 +537,47 @@ async function restoreThread(threadId: string): Promise<void> {
   await Promise.all([messages.load(thread.id), messages.loadQueue(thread.id)]);
 }
 
+async function switchLeafThread(leaf: SplitPaneTree, threadId: string): Promise<void> {
+  if (leaf.type !== "leaf") {
+    return;
+  }
+  const thread = threads.threadById(threadId) ?? (await apiClient.getThread(threadId));
+  threads.upsertThread(thread);
+  boardTree.value = replaceThreadLeaf(boardTree.value, leaf.id, thread.id);
+  threads.rememberOpenThread(thread);
+  await persistBoardTree();
+  await restoreThread(thread.id);
+  focusThreadPane(leaf.id);
+}
+
+async function refreshThreadForLeaf(leaf: SplitPaneTree): Promise<void> {
+  const thread = threadForLeaf(leaf);
+  if (thread === null) {
+    return;
+  }
+
+  const refreshed = await apiClient.getThread(thread.id);
+  threads.upsertThread(refreshed);
+}
+
+function replaceThreadLeaf(
+  tree: SplitPaneTree | null,
+  leafId: string,
+  threadId: string
+): SplitPaneTree | null {
+  if (tree === null) {
+    return null;
+  }
+  if (tree.type === "leaf") {
+    return tree.id === leafId ? { ...tree, threadId } : tree;
+  }
+  return {
+    ...tree,
+    first: replaceThreadLeaf(tree.first, leafId, threadId) ?? tree.first,
+    second: replaceThreadLeaf(tree.second, leafId, threadId) ?? tree.second
+  };
+}
+
 async function persistBoardTree(): Promise<void> {
   await uiLayout.persistTree("boards", BOARDS_OWNER_ID, boardTree.value);
 }
@@ -549,35 +605,6 @@ function statusTagType(status: AppServerStatus): "success" | "warning" | "danger
     return "danger";
   }
   return "info";
-}
-
-function autoPlacementDirection(tree: SplitPaneTree | null, appServerId: string): "right" | "down" {
-  const appServerPaneCount = threadIdsForAppServer(tree, appServerId).length;
-  if (appServerPaneCount > 0) {
-    return appServerPaneCount % 2 === 0 ? "down" : "right";
-  }
-
-  return leafPayloadIds(tree, "threadId").length % 2 === 0 ? "down" : "right";
-}
-
-function threadIdsForAppServer(tree: SplitPaneTree | null, appServerId: string): string[] {
-  return leafPayloadIds(tree, "threadId").filter(
-    (threadId) => threads.threadById(threadId)?.appServerId === appServerId
-  );
-}
-
-function lastLeafIdForAppServer(tree: SplitPaneTree | null, appServerId: string): string | null {
-  if (tree === null) {
-    return null;
-  }
-
-  if (tree.type === "leaf") {
-    return tree.threadId !== undefined && threads.threadById(tree.threadId)?.appServerId === appServerId
-      ? tree.id
-      : null;
-  }
-
-  return lastLeafIdForAppServer(tree.second, appServerId) ?? lastLeafIdForAppServer(tree.first, appServerId);
 }
 
 function findLeaf(tree: SplitPaneTree | null, id: string | null): SplitPaneLeaf | null {
@@ -608,4 +635,43 @@ function findLeafByPayload(
   return findLeafByPayload(tree.first, key, value) ?? findLeafByPayload(tree.second, key, value);
 }
 
+function collectThreadLeaves(tree: SplitPaneTree | null): SplitPaneLeaf[] {
+  if (tree === null) {
+    return [];
+  }
+
+  if (tree.type === "leaf") {
+    return tree.threadId === undefined ? [] : [tree];
+  }
+
+  return [...collectThreadLeaves(tree.first), ...collectThreadLeaves(tree.second)];
+}
+
+function lastLeafIndexForAppServer(leaves: readonly SplitPaneLeaf[], appServerId: string): number {
+  for (let index = leaves.length - 1; index >= 0; index -= 1) {
+    const threadId = leaves[index]?.threadId;
+    if (threadId !== undefined && threads.threadById(threadId)?.appServerId === appServerId) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function buildLinearThreadTree(leaves: readonly SplitPaneLeaf[]): SplitPaneTree | null {
+  return leaves.reduce<SplitPaneTree | null>((tree, leaf) => {
+    if (tree === null) {
+      return leaf;
+    }
+
+    return {
+      type: "split",
+      id: crypto.randomUUID(),
+      direction: "horizontal",
+      first: tree,
+      second: leaf,
+      ratio: 0.5
+    };
+  }, null);
+}
 </script>

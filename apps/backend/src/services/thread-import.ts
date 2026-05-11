@@ -1,11 +1,18 @@
 import { randomUUID } from "node:crypto";
 
-import type { ChatMessage, ChatMessageRole, MessagePart, ThreadDto } from "@agentmesh/shared";
+import type {
+  ChatMessage,
+  ChatMessageRole,
+  MessagePart,
+  ThreadDto,
+  ThreadRuntimeDto
+} from "@agentmesh/shared";
 
 import type { DatabaseHandle } from "../db/index.js";
-import { NotFoundError, ProtocolError } from "../errors.js";
+import { NotFoundError, ProtocolError, RequestValidationError } from "../errors.js";
 import type { JsonValue } from "./codex-json-rpc.js";
 import type { EventService } from "./events.js";
+import { buildThreadRuntime } from "./thread-runtime.js";
 
 type CodexRequester = {
   request<TResult extends JsonValue = JsonValue, TParams extends JsonValue = JsonValue>(
@@ -19,6 +26,10 @@ type ThreadRow = {
   readonly app_server_id: string;
   readonly codex_thread_id: string;
   readonly thread_name: string;
+  readonly agent_kind: "main" | "subagent";
+  readonly parent_thread_id: string | null;
+  readonly parent_codex_thread_id: string | null;
+  readonly agent_name: string | null;
   readonly title: string | null;
   readonly status: string | null;
   readonly cwd: string | null;
@@ -63,11 +74,15 @@ export class ThreadImportService {
   ) {}
 
   public getThread(threadId: string): ThreadDto {
-    return toThreadDto(this.findThread(threadId));
+    const thread = this.findThread(threadId);
+    return this.toThreadDto(thread, this.findAppServerStatus(thread.app_server_id));
   }
 
   public listMessages(threadId: string): ChatMessage[] {
-    this.findThread(threadId);
+    const thread = this.findThread(threadId);
+    if (thread.agent_kind === "subagent") {
+      return [];
+    }
 
     const rows = this.database.sqlite
       .prepare(
@@ -93,9 +108,27 @@ export class ThreadImportService {
   }> {
     const existing = this.findThread(threadId);
 
+    if (existing.agent_kind === "subagent") {
+      if (requester === undefined) {
+        throw new ProtocolError("Subagent thread requires a live Codex transport");
+      }
+
+      const raw = await requester.request("thread/read", { threadId: existing.codex_thread_id });
+      const messages = normalizeThreadRead(raw).flatMap((turn) =>
+        turn.messages.map((message, index) =>
+          toTransientMessageDto(existing, turn.codexTurnId, message, index)
+        )
+      );
+      return {
+        thread: this.toThreadDto(existing, this.findAppServerStatus(existing.app_server_id)),
+        imported: false,
+        messages
+      };
+    }
+
     if (existing.imported_at !== null) {
       return {
-        thread: toThreadDto(existing),
+        thread: this.toThreadDto(existing, this.findAppServerStatus(existing.app_server_id)),
         imported: false,
         messages: this.listMessages(threadId)
       };
@@ -208,6 +241,41 @@ export class ThreadImportService {
     return { thread, imported: true, messages };
   }
 
+  public async renameThread(
+    threadId: string,
+    requester: CodexRequester,
+    name: string
+  ): Promise<ThreadDto> {
+    const existing = this.findThread(threadId);
+    if (existing.agent_kind !== "main") {
+      throw new RequestValidationError("Only agent threads can be renamed");
+    }
+
+    await requester.request("thread/name/set", { threadId: existing.codex_thread_id, name });
+    const now = Date.now();
+    this.database.sqlite
+      .prepare(
+        `
+          UPDATE threads
+          SET thread_name = ?, raw_metadata_json = ?, updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(name, JSON.stringify(withThreadName(existing.raw_metadata_json, name)), now, threadId);
+
+    const thread = this.getThread(threadId);
+    this.events.publish({
+      type: "thread.list_changed",
+      appServerId: thread.appServerId,
+      payload: {
+        threads: [],
+        changed: true
+      }
+    });
+
+    return thread;
+  }
+
   private findThread(threadId: string): ThreadRow {
     const row = this.database.sqlite.prepare("SELECT * FROM threads WHERE id = ?").get(threadId) as
       | ThreadRow
@@ -218,6 +286,22 @@ export class ThreadImportService {
     }
 
     return row;
+  }
+
+  private findAppServerStatus(appServerId: string): string {
+    const row = this.database.sqlite
+      .prepare("SELECT status FROM app_servers WHERE id = ? LIMIT 1")
+      .get(appServerId) as { readonly status: string } | undefined;
+
+    if (row === undefined) {
+      throw new NotFoundError("App server not found");
+    }
+
+    return row.status;
+  }
+
+  private toThreadDto(row: ThreadRow, appServerStatus: string): ThreadDto {
+    return toThreadDto(row, appServerStatus, buildThreadRuntime(this.database.sqlite, row));
   }
 }
 
@@ -413,22 +497,51 @@ function normalizePart(value: JsonValue): MessagePart[] {
   return [{ type: "event", eventType: type ?? "part", raw: value }];
 }
 
-function toThreadDto(row: ThreadRow): ThreadDto {
+function toThreadDto(
+  row: ThreadRow,
+  appServerStatus: string,
+  runtime: ThreadRuntimeDto
+): ThreadDto {
   return {
     id: row.id,
     appServerId: row.app_server_id,
     codexThreadId: row.codex_thread_id,
     threadName: row.thread_name,
+    agentKind: row.agent_kind,
+    parentThreadId: row.parent_thread_id,
+    parentCodexThreadId: row.parent_codex_thread_id,
+    agentName: row.agent_name,
     title: row.title,
-    status: row.status,
+    status: appServerStatus === "online" ? (row.status ?? "idle") : "notLoaded",
     cwd: row.cwd,
     isCurrent: row.is_current === 1,
     isGone: row.is_gone === 1,
     importedAt: row.imported_at,
     lastSeenAt: row.last_seen_at,
     rawMetadata: JSON.parse(row.raw_metadata_json) as unknown,
+    runtime,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function toTransientMessageDto(
+  thread: ThreadRow,
+  codexTurnId: string | null,
+  message: ImportedMessage,
+  index: number
+): ChatMessage {
+  return {
+    id: `${thread.id}:transient:${codexTurnId ?? "turn"}:${index}`,
+    appServerId: thread.app_server_id,
+    threadId: thread.id,
+    turnId: codexTurnId,
+    role: message.role,
+    status: "completed",
+    parts: message.parts,
+    rawEventIds: [],
+    createdAt: message.createdAt,
+    updatedAt: message.createdAt
   };
 }
 
@@ -496,6 +609,15 @@ function firstTimestamp(...values: readonly unknown[]): number | undefined {
   }
 
   return undefined;
+}
+
+function withThreadName(rawMetadataJson: string, name: string): unknown {
+  try {
+    const value = JSON.parse(rawMetadataJson) as unknown;
+    return isRecord(value) ? { ...value, name } : value;
+  } catch {
+    return { name };
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, JsonValue | undefined> {

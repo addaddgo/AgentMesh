@@ -33,3 +33,5 @@ uploads/
 **dist**
 packages/
 workspace_test**
+tmp
+apps/myskills

@@ -128,6 +128,10 @@ export const useRealtimeStore = defineStore("realtime", {
             const turn = readPayloadField<TurnDto>(event.payload, "turn");
             if (turn !== null) {
               messages.upsertTurn(turn);
+              if (["completed", "failed"].includes(turn.status)) {
+                const thread = await apiClient.getThread(turn.threadId);
+                threads.upsertThread(thread);
+              }
             }
             break;
           }

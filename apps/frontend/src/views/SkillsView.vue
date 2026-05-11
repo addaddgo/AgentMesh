@@ -2,11 +2,7 @@
   <section class="content-page skills-page">
     <header class="page-header">
       <div>
-        <p class="eyebrow">Skill Distribution</p>
         <h1>Skills</h1>
-        <p>
-          Scan the backend skills root, select skills, and sync them into app-server workspaces.
-        </p>
       </div>
       <div class="actions">
         <el-button
@@ -32,18 +28,29 @@
       <section class="selection-panel">
         <div class="sidebar-title">
           <strong>Available skills</strong>
-          <el-tag>{{ skills.selectedSkillNames.length }} selected</el-tag>
+          <el-tag>{{ filteredSkills.length }} / {{ skills.skills.length }}</el-tag>
         </div>
 
+        <el-input
+          v-model="skillSearch"
+          class="skill-search"
+          size="small"
+          clearable
+          placeholder="Search skills"
+        />
+
         <el-empty v-if="skills.skills.length === 0" description="No skills found" />
-        <div v-else class="selection-list">
+        <div v-else-if="filteredSkills.length === 0" class="selection-list-scroll">
+          <el-empty description="No matching skills" />
+        </div>
+        <div v-else class="selection-list selection-list-scroll">
           <button
-            v-for="skill in skills.skills"
+            v-for="skill in filteredSkills"
             :key="skill.name"
             class="selection-card"
             :class="{ active: skills.selectedSkillNames.includes(skill.name) }"
             type="button"
-            @click="skills.toggleSkill(skill.name)"
+            @click="toggleAvailableSkillDescription(skill.name)"
           >
             <span class="selection-card-title">
               <el-checkbox
@@ -53,114 +60,161 @@
               />
               <strong>{{ skill.name }}</strong>
             </span>
-            <small>{{ skill.description || "No description" }}</small>
+            <small v-if="expandedAvailableSkillNames.has(skill.name)">
+              {{ skill.description || "No description" }}
+            </small>
           </button>
         </div>
       </section>
 
-      <section class="selection-panel">
-        <div class="sidebar-title">
-          <strong>Target app-servers</strong>
-          <el-tag>{{ skills.selectedAppServerIds.length }} selected</el-tag>
-        </div>
-
-        <el-empty
-          v-if="appServers.appServers.length === 0"
-          description="No app servers configured"
-        />
-        <div v-else class="selection-list">
-          <button
-            v-for="server in appServers.appServers"
-            :key="server.id"
-            class="selection-card"
-            :class="{ active: skills.selectedAppServerIds.includes(server.id) }"
-            type="button"
-            @click="skills.toggleAppServer(server.id)"
-          >
-            <span class="selection-card-title">
-              <el-checkbox
-                :model-value="skills.selectedAppServerIds.includes(server.id)"
-                @click.stop
-                @change="skills.toggleAppServer(server.id)"
+      <div class="target-workspace-stack">
+        <section class="selection-panel">
+          <div class="sidebar-title">
+            <strong>Target app-servers</strong>
+            <el-tag>{{ skills.selectedAppServerIds.length }} selected</el-tag>
+            <span class="target-actions">
+              <el-button
+                type="primary"
+                :icon="Connection"
+                :loading="skills.syncing"
+                :disabled="!skills.canSync"
+                circle
+                title="Overwrite selected skills"
+                aria-label="Overwrite selected skills"
+                @click="skills.syncSelected()"
               />
-              <strong>{{ appServerLabel(server) }}</strong>
-              <el-tag :type="statusTagType(server.status)" size="small">{{ server.status }}</el-tag>
+              <el-button
+                :icon="Refresh"
+                :loading="targetSkillsLoading"
+                circle
+                title="Refresh target skills"
+                aria-label="Refresh target skills"
+                @click="loadTargetSkills"
+              />
             </span>
-            <small>{{ server.hostKind }}</small>
-          </button>
-        </div>
-      </section>
-
-      <section class="sync-panel">
-        <header class="sync-header">
-          <div>
-            <p class="eyebrow">Sync</p>
-            <h2>Overwrite target skills</h2>
-            <p>
-              Backend copies each selected skill to
-              <code>&lt;workspace&gt;/.codex/skills/&lt;skill-name&gt;</code>.
-            </p>
           </div>
-          <el-button
-            type="primary"
-            :icon="Connection"
-            :loading="skills.syncing"
-            :disabled="!skills.canSync"
-            circle
-            title="Sync selected"
-            aria-label="Sync selected"
-            @click="skills.syncSelected()"
+
+          <el-empty
+            v-if="appServers.appServers.length === 0"
+            description="No app servers configured"
           />
-        </header>
+          <div v-else class="selection-list target-server-list">
+            <button
+              v-for="server in appServers.appServers"
+              :key="server.id"
+              class="selection-card"
+              :class="{
+                active: skills.selectedAppServerIds.includes(server.id),
+                viewing: viewedAppServerId === server.id
+              }"
+              type="button"
+              @click="viewTargetAppServer(server.id)"
+            >
+              <span class="selection-card-title">
+                <el-checkbox
+                  :model-value="skills.selectedAppServerIds.includes(server.id)"
+                  @click.stop
+                  @change="skills.toggleAppServer(server.id)"
+                />
+                <strong>{{ appServerLabel(server) }}</strong>
+                <el-tag :type="statusTagType(server.status)" size="small">{{ server.status }}</el-tag>
+              </span>
+              <small>{{ server.hostKind }}</small>
+            </button>
+          </div>
+        </section>
 
-        <el-alert
-          v-if="!skills.canSync && !skills.syncing"
-          title="Select at least one skill and one app-server."
-          type="info"
-          show-icon
-          :closable="false"
-        />
-
-        <div v-if="skills.syncResults.length > 0" class="sync-results">
-          <article
-            v-for="result in skills.syncResults"
-            :key="`${result.skillName}:${result.appServerId}`"
-            class="sync-result-card"
-            :class="result.status"
-          >
-            <div>
-              <strong>{{ result.skillName }}</strong>
-              <span>to {{ appServerName(result.appServerId) }}</span>
-            </div>
-            <el-tag :type="result.status === 'synced' ? 'success' : 'danger'">
-              {{ result.status }}
-            </el-tag>
-            <small>{{ result.targetPath ?? "No target path returned" }}</small>
-            <el-alert
-              v-if="result.error !== null"
-              :title="result.error"
-              type="error"
-              show-icon
-              :closable="false"
+        <section class="selection-panel target-skill-panel">
+          <div class="sidebar-title">
+            <strong>Workspace skill list</strong>
+            <span class="viewing-target-name">{{ viewedAppServerName }}</span>
+            <el-tag>{{ targetSkills.length }}</el-tag>
+          </div>
+          <div class="target-skill-list">
+            <el-empty
+              v-if="viewedAppServerId === null"
+              description="Click a target app-server"
             />
-          </article>
-        </div>
-        <el-empty v-else description="Sync results will appear here" />
-      </section>
+            <el-empty v-else-if="targetSkills.length === 0" description="No target skills" />
+            <button
+              v-for="targetSkill in targetSkills"
+              v-else
+              :key="targetSkill.name"
+              class="target-skill-row"
+              :class="{ expanded: expandedTargetSkillNames.has(targetSkill.name) }"
+              type="button"
+              @click="toggleTargetSkillDescription(targetSkill.name)"
+            >
+              <span class="target-skill-content">
+                <strong>{{ targetSkill.name }}</strong>
+                <small v-if="expandedTargetSkillNames.has(targetSkill.name)">
+                  {{ targetSkill.description || "No description" }}
+                </small>
+              </span>
+              <el-button
+                size="small"
+                type="danger"
+                :icon="Delete"
+                circle
+                title="Delete target skill"
+                aria-label="Delete target skill"
+                @click.stop="deleteTargetSkill(targetSkill)"
+              />
+            </button>
+          </div>
+
+          <div v-if="skills.syncResults.length > 0" class="sync-results compact-sync-results">
+            <article
+              v-for="result in skills.syncResults"
+              :key="`${result.skillName}:${result.appServerId}`"
+              class="sync-result-card"
+              :class="result.status"
+            >
+              <strong>{{ result.skillName }}</strong>
+              <el-tag :type="result.status === 'synced' ? 'success' : 'danger'">
+                {{ result.status }}
+              </el-tag>
+            </article>
+          </div>
+        </section>
+      </div>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { Connection, MagicStick, Refresh } from "@element-plus/icons-vue";
-import type { AppServerDto, AppServerStatus } from "@agentmesh/shared";
-import { onMounted } from "vue";
+import { Connection, Delete, MagicStick, Refresh } from "@element-plus/icons-vue";
+import type { AppServerDto, AppServerStatus, TargetSkillDto } from "@agentmesh/shared";
+import { computed, onMounted, ref } from "vue";
 
+import { apiClient } from "../api/client";
 import { useAppServerStore } from "../stores/appServers";
+import { notifyError } from "../stores/errors";
 import { useSkillStore } from "../stores/skills";
 
 const skills = useSkillStore();
 const appServers = useAppServerStore();
+const skillSearch = ref("");
+const viewedAppServerId = ref<string | null>(null);
+const targetSkills = ref<readonly TargetSkillDto[]>([]);
+const targetSkillsLoading = ref(false);
+const expandedAvailableSkillNames = ref(new Set<string>());
+const expandedTargetSkillNames = ref(new Set<string>());
+const viewedAppServerName = computed(() =>
+  viewedAppServerId.value === null ? "No workspace selected" : appServerName(viewedAppServerId.value)
+);
+const filteredSkills = computed(() => {
+  const query = skillSearch.value.trim().toLowerCase();
+  if (query.length === 0) {
+    return skills.skills;
+  }
+
+  return skills.skills.filter(
+    (skill) =>
+      skill.name.toLowerCase().includes(query) ||
+      skill.description.toLowerCase().includes(query)
+  );
+});
 
 onMounted(() => {
   void Promise.all([skills.load(), appServers.load()]);
@@ -168,6 +222,64 @@ onMounted(() => {
 
 async function refreshSkills(): Promise<void> {
   await skills.load();
+}
+
+async function viewTargetAppServer(appServerId: string): Promise<void> {
+  viewedAppServerId.value = appServerId;
+  await loadTargetSkills();
+}
+
+async function loadTargetSkills(): Promise<void> {
+  const appServerId = viewedAppServerId.value;
+  if (appServerId === null) {
+    targetSkills.value = [];
+    return;
+  }
+
+  targetSkillsLoading.value = true;
+  try {
+    targetSkills.value = await apiClient.listTargetSkills(appServerId);
+    const currentNames = new Set(targetSkills.value.map((skill) => skill.name));
+    expandedTargetSkillNames.value = new Set(
+      [...expandedTargetSkillNames.value].filter((name) => currentNames.has(name))
+    );
+  } catch (error) {
+    notifyError(error, "Failed to load target skills");
+  } finally {
+    targetSkillsLoading.value = false;
+  }
+}
+
+function toggleAvailableSkillDescription(skillName: string): void {
+  expandedAvailableSkillNames.value = toggledSet(expandedAvailableSkillNames.value, skillName);
+}
+
+function toggleTargetSkillDescription(skillName: string): void {
+  expandedTargetSkillNames.value = toggledSet(expandedTargetSkillNames.value, skillName);
+}
+
+function toggledSet(source: Set<string>, value: string): Set<string> {
+  const next = new Set(source);
+  if (next.has(value)) {
+    next.delete(value);
+  } else {
+    next.add(value);
+  }
+  return next;
+}
+
+async function deleteTargetSkill(skill: TargetSkillDto): Promise<void> {
+  const appServerId = viewedAppServerId.value;
+  if (appServerId === null) {
+    return;
+  }
+
+  try {
+    await apiClient.deleteTargetSkill(appServerId, skill.name);
+    await loadTargetSkills();
+  } catch (error) {
+    notifyError(error, "Failed to delete target skill");
+  }
 }
 
 function appServerName(id: string): string {

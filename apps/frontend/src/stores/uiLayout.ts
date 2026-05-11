@@ -61,9 +61,14 @@ export const useUiLayoutStore = defineStore("uiLayout", {
     async loadDrafts(): Promise<void> {
       try {
         const response = await apiClient.listDrafts();
-        this.draftsByThreadId = Object.fromEntries(
-          response.drafts.map((draft) => [draft.threadId, draft])
-        );
+        const nextDrafts = { ...this.draftsByThreadId };
+        for (const draft of response.drafts) {
+          const existing = nextDrafts[draft.threadId];
+          if (existing === undefined || existing.updatedAt <= draft.updatedAt) {
+            nextDrafts[draft.threadId] = draft;
+          }
+        }
+        this.draftsByThreadId = nextDrafts;
       } catch (error) {
         if (!isMissingEndpoint(error)) {
           notifyError(error, "Failed to load drafts");

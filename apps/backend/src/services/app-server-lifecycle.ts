@@ -50,14 +50,16 @@ export class AppServerLifecycleRegistry {
       appServer.hostKind === "local"
         ? CodexJsonRpcTransport.local({
             command: appServer.command,
-            cwd: appServer.workspace
+            cwd: appServer.workspace,
+            env: { ...process.env, ...appServer.environment }
           })
         : CodexJsonRpcTransport.ssh({
             host: appServer.host,
             user: appServer.sshUser,
             port: appServer.sshPort,
             workspace: appServer.workspace,
-            command: appServer.command
+            command: appServer.command,
+            env: appServer.environment
           });
 
     const entry: RegistryEntry = {
@@ -92,7 +94,9 @@ export class AppServerLifecycleRegistry {
           name: "AgentMesh",
           version: "0.0.0"
         },
-        capabilities: {}
+        capabilities: {
+          experimentalApi: true
+        }
       });
     } catch (error) {
       const message = errorMessage(error);

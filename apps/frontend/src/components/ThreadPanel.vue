@@ -4,25 +4,38 @@
       <header class="thread-header">
         <div class="thread-header-main">
           <strong>{{ threadTitle }}</strong>
-          <el-tag size="small" :type="isWorking ? 'warning' : 'info'">
-            {{ isWorking ? "working" : (thread.status ?? "idle") }}
+        </div>
+        <div class="thread-header-status-row">
+          <el-tag size="small" :type="threadStatusTagType">
+            {{ effectiveThreadStatus }}
           </el-tag>
+          <el-tag v-if="thread.isGone" size="small" type="danger">Gone</el-tag>
+          <span class="thread-param">mode: {{ threadCollaborationMode }}</span>
           <span class="thread-param">model: {{ threadModel }}</span>
-          <span class="thread-param">server: {{ appServer?.status ?? "missing" }}</span>
+          <span class="thread-param">think: {{ threadReasoningEffort }}</span>
+          <span class="thread-param">ctx: {{ threadContextRemaining }}</span>
+          <span class="thread-param">perm: {{ threadPermissionMode }}</span>
         </div>
         <div class="thread-header-actions">
-          <el-tag v-if="thread.isGone" type="danger">Gone</el-tag>
-          <el-tag v-else-if="appServer?.status !== 'online'" type="warning">Offline</el-tag>
           <el-button
-            v-if="thread.status === 'notLoaded'"
+            v-if="canRenameThread"
+            size="small"
+            :icon="EditPen"
+            circle
+            title="Rename thread"
+            aria-label="Rename thread"
+            @click.stop="openRenameDialog"
+          />
+          <el-button
+            v-if="showResumeAction"
             size="small"
             type="primary"
             :icon="SwitchButton"
             :loading="resuming"
-            :disabled="appServer?.status !== 'online'"
+            :disabled="resumeActionDisabled"
             circle
-            title="Resume thread"
-            aria-label="Resume thread"
+            :title="resumeActionLabel"
+            :aria-label="resumeActionLabel"
             @click.stop="emit('resume')"
           />
           <el-button
@@ -57,114 +70,108 @@
         />
       </section>
 
-      <div ref="scrollContainer" class="message-list virtual-message-list" @scroll="onScroll">
-        <div class="virtual-spacer" :style="{ height: `${virtualTotalHeight}px` }">
-          <article
-            v-for="item in virtualMessages"
-            :key="item.message.id"
-            class="message-card virtual-message-card"
-            :class="item.message.role"
-            :style="{ transform: `translateY(${item.top}px)` }"
-            :draggable="canDragMessage(item.message)"
-            @dragstart="dragMessage($event, item.message)"
-          >
-            <div class="message-meta">
-              <strong>{{ item.message.role }}</strong>
-              <div class="message-tags">
-                <el-tag size="small">{{ item.message.status }}</el-tag>
-                <el-tag v-if="item.message.turnId !== null" size="small" type="info"> turn </el-tag>
-              </div>
-            </div>
-            <template
-              v-for="(part, index) in item.message.parts"
-              :key="`${item.message.id}-${index}`"
-            >
-              <div
-                v-if="part.type === 'markdown'"
-                class="markdown-part"
-                v-html="renderMarkdown(part.text)"
+      <div ref="scrollContainer" class="message-list">
+        <article
+          v-for="(message, index) in messages"
+          :key="message.id"
+          class="message-card"
+          :class="message.role"
+          :draggable="canDragMessage(message)"
+          @dragstart="dragMessage($event, message)"
+        >
+          <div v-if="message.status !== 'completed'" class="message-meta">
+            <el-tag size="small">{{ message.status }}</el-tag>
+          </div>
+          <template v-for="(part, partIndex) in message.parts" :key="`${message.id}-${partIndex}`">
+            <div
+              v-if="part.type === 'markdown'"
+              class="markdown-part"
+              v-html="renderMarkdown(part.text)"
+            />
+            <figure v-else-if="part.type === 'image'" class="image-part">
+              <img
+                v-if="part.url !== undefined"
+                :src="part.url"
+                :alt="part.attachmentId ?? 'Codex image attachment'"
+                loading="lazy"
+                decoding="async"
               />
-              <figure v-else-if="part.type === 'image'" class="image-part">
-                <img
-                  v-if="part.url !== undefined"
-                  :src="part.url"
-                  :alt="part.attachmentId ?? 'Codex image attachment'"
-                  loading="lazy"
-                  decoding="async"
-                />
-                <figcaption>
-                  {{ part.workspacePath ?? part.attachmentId ?? "Image attachment" }}
-                </figcaption>
-              </figure>
-              <el-alert
-                v-else-if="part.type === 'error'"
-                :title="part.message"
-                type="error"
-                :closable="false"
+              <figcaption>
+                {{ part.workspacePath ?? part.attachmentId ?? "Image attachment" }}
+              </figcaption>
+            </figure>
+            <el-alert
+              v-else-if="part.type === 'error'"
+              :title="part.message"
+              type="error"
+              :closable="false"
+            >
+              <pre v-if="part.raw !== undefined">{{ formatJson(part.raw) }}</pre>
+            </el-alert>
+            <details v-else-if="part.type === 'approval'" class="part-card approval-part" open>
+              <summary>
+                Approval · {{ part.kind }}
+                <el-tag size="small">{{ approvalPartStatus(part.approvalId, part.status) }}</el-tag>
+              </summary>
+              <pre>{{ formatJson(part.payload) }}</pre>
+              <div
+                v-if="approvalPartStatus(part.approvalId, part.status) === 'pending'"
+                class="part-actions"
               >
-                <pre v-if="part.raw !== undefined">{{ formatJson(part.raw) }}</pre>
-              </el-alert>
-              <details v-else-if="part.type === 'approval'" class="part-card approval-part" open>
-                <summary>
-                  Approval · {{ part.kind }}
-                  <el-tag size="small">{{
-                    approvalPartStatus(part.approvalId, part.status)
-                  }}</el-tag>
-                </summary>
-                <pre>{{ formatJson(part.payload) }}</pre>
-                <div
-                  v-if="approvalPartStatus(part.approvalId, part.status) === 'pending'"
-                  class="part-actions"
-                >
-                  <el-button
-                    size="small"
-                    type="primary"
-                    :icon="Check"
-                    :loading="approvals.isResponding(part.approvalId)"
-                    :disabled="approvals.isResponding(part.approvalId)"
-                    circle
-                    title="Approve"
-                    aria-label="Approve"
-                    @click="respondApproval(part.approvalId, 'approve')"
-                  />
-                  <el-button
-                    size="small"
-                    type="danger"
-                    :icon="CloseBold"
-                    :loading="approvals.isResponding(part.approvalId)"
-                    :disabled="approvals.isResponding(part.approvalId)"
-                    circle
-                    title="Deny"
-                    aria-label="Deny"
-                    @click="respondApproval(part.approvalId, 'deny')"
-                  />
-                </div>
-              </details>
-              <details v-else-if="part.type === 'diff'" class="part-card">
-                <summary>Diff</summary>
-                <pre>{{ part.text }}</pre>
-              </details>
-              <details v-else-if="part.type === 'tool_call'" class="part-card">
-                <summary>
-                  Tool call · {{ part.toolName }}
-                  <el-tag size="small">{{ part.status }}</el-tag>
-                </summary>
-                <pre>{{ formatJson(part.input) }}</pre>
-              </details>
-              <details v-else-if="part.type === 'tool_result'" class="part-card">
-                <summary>
-                  Tool result · {{ part.callId }}
-                  <el-tag size="small">{{ part.status }}</el-tag>
-                </summary>
-                <pre>{{ formatJson(part.output) }}</pre>
-              </details>
-              <details v-else class="part-card">
-                <summary>Event · {{ part.eventType }}</summary>
-                <pre>{{ formatJson(part.raw) }}</pre>
-              </details>
-            </template>
-          </article>
-        </div>
+                <el-button
+                  size="small"
+                  type="primary"
+                  :icon="Check"
+                  :loading="approvals.isResponding(part.approvalId)"
+                  :disabled="approvals.isResponding(part.approvalId)"
+                  circle
+                  title="Approve"
+                  aria-label="Approve"
+                  @click="respondApproval(part.approvalId, 'approve')"
+                />
+                <el-button
+                  size="small"
+                  type="danger"
+                  :icon="CloseBold"
+                  :loading="approvals.isResponding(part.approvalId)"
+                  :disabled="approvals.isResponding(part.approvalId)"
+                  circle
+                  title="Deny"
+                  aria-label="Deny"
+                  @click="respondApproval(part.approvalId, 'deny')"
+                />
+              </div>
+            </details>
+            <details v-else-if="part.type === 'diff'" class="part-card">
+              <summary>Diff</summary>
+              <pre>{{ part.text }}</pre>
+            </details>
+            <details v-else-if="part.type === 'tool_call'" class="part-card">
+              <summary>
+                Tool call · {{ part.toolName }}
+                <el-tag size="small">{{ part.status }}</el-tag>
+              </summary>
+              <pre>{{ formatJson(part.input) }}</pre>
+            </details>
+            <details v-else-if="part.type === 'tool_result'" class="part-card">
+              <summary>
+                Tool result · {{ part.callId }}
+                <el-tag size="small">{{ part.status }}</el-tag>
+              </summary>
+              <pre>{{ formatJson(part.output) }}</pre>
+            </details>
+            <details v-else class="part-card">
+              <summary>Event · {{ part.eventType }}</summary>
+              <pre>{{ formatJson(part.raw) }}</pre>
+            </details>
+          </template>
+          <footer v-if="message.role === 'assistant'" class="message-time">
+            <span>{{ formatMessageTime(message.createdAt) }}</span>
+            <span>{{
+              formatMessageDelta(messages[index - 1]?.createdAt ?? null, message.createdAt)
+            }}</span>
+          </footer>
+        </article>
       </div>
 
       <div
@@ -175,10 +182,6 @@
         @dragleave="dragLeaveComposer"
         @drop.prevent="dropIntoComposer($event)"
       >
-        <div class="composer-toolbar">
-          <span>Markdown source</span>
-        </div>
-
         <div
           ref="editorHost"
           class="markdown-editor"
@@ -191,10 +194,6 @@
         <div v-if="attachments.length > 0" class="attachment-list">
           <article v-for="item in attachments" :key="item.attachment.id" class="attachment-chip">
             <img :src="item.previewUrl" :alt="item.attachment.filename" />
-            <div>
-              <strong>{{ item.attachment.filename }}</strong>
-              <small>{{ formatBytes(item.attachment.size) }}</small>
-            </div>
             <el-button
               size="small"
               text
@@ -223,7 +222,7 @@
           <span>
             {{
               disabledReason ??
-              `${attachments.length}/${MAX_ATTACHMENTS} images selected. Drop message text here.`
+              `${attachments.length}/${MAX_ATTACHMENTS} images selected. Drop message text or images here.`
             }}
           </span>
           <div class="composer-button-group">
@@ -258,6 +257,30 @@
           </details>
         </div>
       </el-drawer>
+
+      <el-dialog v-model="renameDialogOpen" title="Rename Thread" width="420px">
+        <el-input
+          v-model="renameDraft"
+          autofocus
+          maxlength="120"
+          show-word-limit
+          placeholder="Thread name"
+          @keyup.enter="renameThread"
+        />
+        <template #footer>
+          <div class="dialog-actions">
+            <el-button :disabled="renaming" @click="renameDialogOpen = false">Cancel</el-button>
+            <el-button
+              type="primary"
+              :loading="renaming"
+              :disabled="renameDraft.trim().length === 0"
+              @click="renameThread"
+            >
+              Rename
+            </el-button>
+          </div>
+        </template>
+      </el-dialog>
     </template>
 
     <el-empty v-else description="Opened thread is missing from local history" />
@@ -270,6 +293,7 @@ import {
   CloseBold,
   Delete,
   Document,
+  EditPen,
   PictureFilled,
   Promotion,
   SwitchButton
@@ -279,19 +303,27 @@ import type {
   ApprovalDecision,
   ApprovalDto,
   ChatMessage,
+  CodexCommandDto,
+  CodexCommandOptionDto,
   CodexEventDto,
   ImageAttachmentDto,
   QueueItemDto,
-  ThreadDto
+  SkillDto,
+  ThreadDto,
+  WorkspaceEntryDto
 } from "@agentmesh/shared";
 import {
+  acceptCompletion,
   autocompletion,
+  closeCompletion,
+  moveCompletionSelection,
+  startCompletion,
   type Completion,
   type CompletionContext,
   type CompletionResult
 } from "@codemirror/autocomplete";
-import { Compartment } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { Compartment, Prec } from "@codemirror/state";
+import { EditorView, keymap } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { basicSetup } from "codemirror";
 import MarkdownIt from "markdown-it";
@@ -300,30 +332,19 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { apiClient } from "../api/client";
 import ApprovalCard from "./ApprovalCard.vue";
 import { useApprovalStore } from "../stores/approvals";
-import { notifyError } from "../stores/errors";
-import { useSkillStore } from "../stores/skills";
+import { notifyError, notifyInfo } from "../stores/errors";
 import {
+  appendDroppedText,
   canDropMessageText,
   readMessageTextDrop,
   textForMessageDrag,
   writeMessageTextDrag
 } from "../utils/messageDragDrop";
 
-const MESSAGE_ROW_HEIGHT = 190;
-const VIRTUAL_BUFFER = 6;
 const MAX_ATTACHMENTS = 5;
+const LOCAL_DRAFT_PROTECTION_MS = 5000;
+const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const markdownRenderer = new MarkdownIt({ html: false, linkify: true });
-
-const SLASH_COMMANDS: readonly Completion[] = [
-  { label: "/help", type: "keyword", detail: "Show Codex commands", apply: "/help " },
-  { label: "/model", type: "keyword", detail: "Change or inspect model", apply: "/model " },
-  { label: "/approvals", type: "keyword", detail: "Configure approval mode", apply: "/approvals " },
-  { label: "/status", type: "keyword", detail: "Show current thread status", apply: "/status " },
-  { label: "/compact", type: "keyword", detail: "Compact conversation context", apply: "/compact " },
-  { label: "/init", type: "keyword", detail: "Initialize project instructions", apply: "/init " },
-  { label: "/review", type: "keyword", detail: "Ask for a code review", apply: "/review " },
-  { label: "/clear", type: "keyword", detail: "Clear local prompt context", apply: "/clear " }
-];
 
 type SelectedAttachment = {
   readonly attachment: ImageAttachmentDto;
@@ -345,32 +366,44 @@ const emit = defineEmits<{
   "save-draft": [];
   send: [
     payload: {
+      readonly draftMarkdown: string;
       readonly attachmentIds: readonly string[];
       readonly onSuccess: () => void;
     }
   ];
   dropped: [value: string];
   resume: [];
+  "switch-thread": [threadId: string];
+  "settings-updated": [];
+  "thread-updated": [thread: ThreadDto];
   close: [];
 }>();
 
 const approvals = useApprovalStore();
-const skills = useSkillStore();
 const scrollContainer = ref<HTMLElement | null>(null);
 const editorHost = ref<HTMLElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
-const scrollTop = ref(0);
-const viewportHeight = ref(420);
 const debugDrawerOpen = ref(false);
 const rawEvents = ref<readonly CodexEventDto[]>([]);
 const rawEventsLoading = ref(false);
 const attachments = ref<SelectedAttachment[]>([]);
 const uploading = ref(false);
 const isDropTarget = ref(false);
+const renameDialogOpen = ref(false);
+const renameDraft = ref("");
+const renaming = ref(false);
+const editorDraft = ref(props.draft);
 const editableCompartment = new Compartment();
 let editorView: EditorView | null = null;
 let saveDraftTimer: ReturnType<typeof setTimeout> | null = null;
 let dragDepth = 0;
+let activeEditorThreadId: string | null = props.thread?.id ?? null;
+let lastLocalDraft = props.draft;
+let lastLocalEditAt = 0;
+let applyingExternalDraft = false;
+const commandCompletionCache = new Map<string, readonly CodexCommandDto[]>();
+const skillCompletionCache = new Map<string, readonly SkillDto[]>();
+const commandOptionCompletionCache = new Map<string, readonly CodexCommandOptionDto[]>();
 
 const disabledReason = computed(() => {
   if (props.thread?.isGone === true) {
@@ -379,7 +412,7 @@ const disabledReason = computed(() => {
   if (props.appServer?.status !== "online") {
     return "The app-server is offline.";
   }
-  if (props.thread?.status === "notLoaded") {
+  if (effectiveThreadStatus.value === "notLoaded") {
     return "Resume this thread before sending.";
   }
   return null;
@@ -390,7 +423,7 @@ const canSend = computed(
   () =>
     canEdit.value &&
     !uploading.value &&
-    (props.draft.trim().length > 0 || attachments.value.length > 0)
+    (editorDraft.value.trim().length > 0 || attachments.value.length > 0)
 );
 const threadApprovals = computed<readonly ApprovalDto[]>(() => {
   if (props.thread === null) {
@@ -408,7 +441,30 @@ const isWorking = computed(
       ["pending", "running", "waiting_approval"].includes(item.status)
     )
 );
+const effectiveThreadStatus = computed(() => {
+  if (props.thread === null) {
+    return "notLoaded";
+  }
+  if (isWorking.value) {
+    return "working";
+  }
+  return props.thread.status ?? "idle";
+});
+const threadStatusTagType = computed(() => {
+  if (effectiveThreadStatus.value === "working") {
+    return "warning";
+  }
+  if (effectiveThreadStatus.value === "notLoaded") {
+    return "info";
+  }
+  return "success";
+});
 const threadModel = computed(() => {
+  const runtimeModel = props.thread?.runtime?.model;
+  if (runtimeModel !== undefined && runtimeModel !== null && runtimeModel.trim().length > 0) {
+    return runtimeModel;
+  }
+
   const raw = props.thread?.rawMetadata;
   if (raw !== null && typeof raw === "object") {
     const record = raw as Record<string, unknown>;
@@ -427,20 +483,42 @@ const threadModel = computed(() => {
 
   return "default";
 });
+const threadSubagentName = computed(() => {
+  return props.thread?.agentName ?? props.thread?.runtime?.agentName ?? "main agent";
+});
+const threadCollaborationMode = computed(
+  () => props.thread?.runtime?.collaborationMode ?? "default"
+);
+const threadReasoningEffort = computed(() => props.thread?.runtime?.reasoningEffort ?? "default");
+const threadContextRemaining = computed(() => {
+  const percent = props.thread?.runtime?.contextRemainingPercent;
+  return typeof percent === "number" ? `${percent}%` : "unknown";
+});
+const threadPermissionMode = computed(() => props.thread?.runtime?.permissionMode ?? "default");
 const threadTitle = computed(() => {
-  const appServerName = props.appServer === null ? "missing" : props.appServer.name;
-  return `${appServerName} / ${props.thread?.threadName ?? "thread"}`;
+  const workspaceName = props.appServer === null ? "missing" : props.appServer.name;
+  const mainThreadName =
+    props.thread?.runtime?.mainThreadName ?? props.thread?.threadName ?? "thread";
+  return `${workspaceName}/${mainThreadName}/${threadSubagentName.value}`;
 });
-const virtualTotalHeight = computed(() => props.messages.length * MESSAGE_ROW_HEIGHT);
-const virtualMessages = computed(() => {
-  const start = Math.max(0, Math.floor(scrollTop.value / MESSAGE_ROW_HEIGHT) - VIRTUAL_BUFFER);
-  const visibleCount = Math.ceil(viewportHeight.value / MESSAGE_ROW_HEIGHT) + VIRTUAL_BUFFER * 2;
-  return props.messages.slice(start, start + visibleCount).map((message, index) => ({
-    message,
-    top: (start + index) * MESSAGE_ROW_HEIGHT
-  }));
-});
-
+const showResumeAction = computed(
+  () => props.thread !== null && !props.thread.isGone && effectiveThreadStatus.value === "notLoaded"
+);
+const canRenameThread = computed(
+  () =>
+    props.thread !== null &&
+    props.thread.agentKind === "main" &&
+    props.appServer?.status === "online"
+);
+const resumeActionDisabled = computed(
+  () =>
+    props.appServer === null ||
+    props.appServer.status === "starting" ||
+    props.appServer.status === "stopping"
+);
+const resumeActionLabel = computed(() =>
+  props.appServer?.status === "online" ? "Resume thread" : "Start app-server and resume thread"
+);
 watch(
   () => props.messages.length,
   async () => {
@@ -465,25 +543,55 @@ onMounted(() => {
       EditorView.lineWrapping,
       autocompletion({
         activateOnTyping: true,
+        activateOnTypingDelay: 220,
+        defaultKeymap: false,
         icons: false,
         maxRenderedOptions: 12,
         override: [completeCommandOrSkill]
       }),
+      Prec.high(
+        keymap.of([
+          {
+            key: "ArrowDown",
+            run: moveCompletionSelection(true)
+          },
+          {
+            key: "ArrowUp",
+            run: moveCompletionSelection(false)
+          },
+          {
+            key: "PageDown",
+            run: moveCompletionSelection(true, "page")
+          },
+          {
+            key: "PageUp",
+            run: moveCompletionSelection(false, "page")
+          },
+          {
+            key: "Escape",
+            run: closeCompletion
+          },
+          {
+            key: "Enter",
+            run: acceptCompletion
+          },
+          {
+            key: "Tab",
+            run: (view) => acceptCompletion(view) || insertTabIndent(view)
+          }
+        ])
+      ),
       editableCompartment.of(EditorView.editable.of(canEdit.value)),
       EditorView.updateListener.of((update) => {
-        if (!update.docChanged) {
+        if (!update.docChanged || applyingExternalDraft) {
           return;
         }
 
-        emit("draft", update.state.doc.toString());
+        setLocalDraft(update.state.doc.toString(), true);
         scheduleDraftSave();
       })
     ]
   });
-
-  if (skills.skills.length === 0 && !skills.loading) {
-    void skills.load();
-  }
 });
 
 onBeforeUnmount(() => {
@@ -497,15 +605,30 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => props.draft,
-  (nextDraft) => {
-    if (editorView === null || editorView.state.doc.toString() === nextDraft) {
+  () => [props.thread?.id ?? null, props.draft] as const,
+  ([threadId, nextDraft]) => {
+    if (editorView === null) {
       return;
     }
 
-    editorView.dispatch({
-      changes: { from: 0, to: editorView.state.doc.length, insert: nextDraft }
-    });
+    const threadChanged = threadId !== activeEditorThreadId;
+    activeEditorThreadId = threadId;
+
+    if (threadChanged) {
+      replaceEditorDraft(nextDraft);
+      return;
+    }
+
+    if (nextDraft === lastLocalDraft || editorView.state.doc.toString() === nextDraft) {
+      return;
+    }
+
+    // Stale async draft loads must not overwrite active typing.
+    if (editorView.hasFocus || Date.now() - lastLocalEditAt < LOCAL_DRAFT_PROTECTION_MS) {
+      return;
+    }
+
+    replaceEditorDraft(nextDraft);
   }
 );
 
@@ -540,34 +663,240 @@ function canDragMessage(message: ChatMessage): boolean {
   return textForMessageDrag(message).trim().length > 0;
 }
 
-function completeCommandOrSkill(context: CompletionContext): CompletionResult | null {
+function completeCommandOrSkill(
+  context: CompletionContext
+): CompletionResult | Promise<CompletionResult | null> | null {
   const line = context.state.doc.lineAt(context.pos);
   const beforeCursor = line.text.slice(0, context.pos - line.from);
-  const match = /(^|\s)([/$][\w-]*)$/u.exec(beforeCursor);
-  if (match === null) {
+
+  const slashArgumentMatch =
+    /^(\/(?:subagents|collab|model|permission|permissions))\s+([^\s]*)$/u.exec(beforeCursor);
+  if (slashArgumentMatch !== null) {
+    const command = slashArgumentMatch[1] ?? "";
+    const token = slashArgumentMatch[2] ?? "";
+    return completeSlashCommandOption(context.pos - token.length, command);
+  }
+
+  const slashCommandMatch = /^(\/[^\s]*)$/u.exec(beforeCursor);
+  if (slashCommandMatch !== null) {
+    const token = slashCommandMatch[1] ?? "";
+    return completeSlashCommand(context.pos - token.length);
+  }
+
+  const inlineMatch = /(^|\s)([@$][^\s]*)$/u.exec(beforeCursor);
+  if (inlineMatch === null) {
     return null;
   }
 
-  const token = match[2] ?? "";
+  const token = inlineMatch[2] ?? "";
   const from = context.pos - token.length;
-  if (token.startsWith("/")) {
-    return {
-      from,
-      options: SLASH_COMMANDS,
-      validFor: /^\/[\w-]*$/u
-    };
+  if (token.startsWith("@")) {
+    return completeWorkspacePath(from, token);
   }
+
+  return completeSkill(from);
+}
+
+async function completeWorkspacePath(
+  from: number,
+  token: string
+): Promise<CompletionResult | null> {
+  const appServerId = props.appServer?.id;
+  if (appServerId === undefined) {
+    return null;
+  }
+
+  const entries = await apiClient.listWorkspaceEntries(appServerId, token.slice(1));
+  return {
+    from,
+    options: entries.map(workspaceEntryCompletion),
+    validFor: /^@[^\s]*$/u
+  };
+}
+
+function workspaceEntryCompletion(entry: WorkspaceEntryDto): Completion {
+  return {
+    label: `@${entry.path}`,
+    type: entry.kind === "directory" ? "folder" : "file",
+    detail: entry.kind,
+    apply: `@${entry.path}${entry.kind === "directory" ? "" : " "}`
+  };
+}
+
+async function completeSkill(from: number): Promise<CompletionResult> {
+  const appServerId = props.appServer?.id;
+  const codexSkills = appServerId === undefined ? [] : await cachedCodexSkills(appServerId);
 
   return {
     from,
-    options: skills.skills.map((skill) => ({
-      label: `$${skill.name}`,
-      type: "variable",
-      detail: compactCompletionDetail(skill.description),
-      apply: `$${skill.name} `
-    })),
+    options: codexSkills.map(skillCompletion),
     validFor: /^\$[\w-]*$/u
   };
+}
+
+async function completeSlashCommand(from: number): Promise<CompletionResult> {
+  const appServerId = props.appServer?.id;
+  const commands = appServerId === undefined ? [] : await cachedCodexCommands(appServerId);
+
+  return {
+    from,
+    options: commands.map(commandCompletion),
+    validFor: /^\/[\w-]*$/u
+  };
+}
+
+async function completeSlashCommandOption(
+  from: number,
+  command: string
+): Promise<CompletionResult> {
+  const appServerId = props.appServer?.id;
+  const threadId = props.thread?.id;
+  const options =
+    appServerId === undefined
+      ? []
+      : await cachedCodexCommandOptions(appServerId, command, threadId);
+
+  return {
+    from,
+    options: options.map((option) => commandOptionCompletion(command, option)),
+    validFor: /^[^\s]*$/u
+  };
+}
+
+async function cachedCodexCommands(appServerId: string): Promise<readonly CodexCommandDto[]> {
+  const cached = commandCompletionCache.get(appServerId);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const commands = await apiClient.listCodexCommands(appServerId);
+  commandCompletionCache.set(appServerId, commands);
+  return commands;
+}
+
+async function cachedCodexSkills(appServerId: string): Promise<readonly SkillDto[]> {
+  const cached = skillCompletionCache.get(appServerId);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const skills = await apiClient.listCodexSkills(appServerId);
+  skillCompletionCache.set(appServerId, skills);
+  return skills;
+}
+
+async function cachedCodexCommandOptions(
+  appServerId: string,
+  command: string,
+  threadId: string | undefined
+): Promise<readonly CodexCommandOptionDto[]> {
+  const key = `${appServerId}:${threadId ?? ""}:${normalizeSlashCommand(command)}`;
+  const cached = commandOptionCompletionCache.get(key);
+  if (normalizeSlashCommand(command) === "/subagents" && cached !== undefined) {
+    void apiClient
+      .listCodexCommandOptions(appServerId, command, threadId)
+      .then((options) => {
+        commandOptionCompletionCache.set(key, options);
+      })
+      .catch((error: unknown) => {
+        notifyError(error, "Failed to refresh subagents");
+      });
+    return cached;
+  }
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const options = await apiClient.listCodexCommandOptions(appServerId, command, threadId);
+  commandOptionCompletionCache.set(key, options);
+  return options;
+}
+
+function skillCompletion(skill: SkillDto): Completion {
+  return {
+    label: `$${skill.name}`,
+    type: "variable",
+    detail: compactCompletionDetail(skill.description),
+    apply: `$${skill.name} `
+  };
+}
+
+function commandCompletion(command: CodexCommandDto): Completion {
+  return {
+    label: command.name,
+    type: "keyword",
+    detail: compactCompletionDetail(command.description),
+    apply:
+      command.name === "/plan"
+        ? applySlashCommandOption(command.name, "plan", "Plan")
+        : command.hasOptions === true
+          ? applySlashCommandAndOpenOptions(command.name)
+          : `${command.name} `
+  };
+}
+
+function commandOptionCompletion(command: string, option: CodexCommandOptionDto): Completion {
+  return {
+    label: option.label,
+    type: "constant",
+    detail: compactCompletionDetail(option.description),
+    apply: applySlashCommandOption(command, option.value ?? option.label, option.label)
+  };
+}
+
+function applySlashCommandAndOpenOptions(commandName: string): NonNullable<Completion["apply"]> {
+  return (view, _completion, from, to) => {
+    const insert = `${commandName} `;
+    view.dispatch({
+      changes: { from, to, insert },
+      selection: { anchor: from + insert.length }
+    });
+    queueMicrotask(() => startCompletion(view));
+  };
+}
+
+function applySlashCommandOption(
+  command: string,
+  option: string,
+  label: string
+): NonNullable<Completion["apply"]> {
+  return (view, _completion, from, to) => {
+    const threadId = props.thread?.id;
+    if (threadId === undefined) {
+      return;
+    }
+
+    if (normalizeSlashCommand(command) === "/subagents") {
+      replaceEditorDraft("");
+      emit("switch-thread", option);
+      return;
+    }
+
+    void apiClient
+      .applyCodexCommandSelection(threadId, { command, option })
+      .then(() => {
+        replaceEditorDraft("");
+        emit("settings-updated");
+        notifyInfo(`${command} set to ${label}`, "Thread settings updated");
+      })
+      .catch((error: unknown) => {
+        notifyError(error, "Failed to apply Codex command");
+        view.dispatch({
+          changes: { from, to, insert: option },
+          selection: { anchor: from + option.length }
+        });
+      });
+  };
+}
+
+function normalizeSlashCommand(command: string): string {
+  const normalized = command.trim();
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+
+function insertTabIndent(view: EditorView): boolean {
+  view.dispatch(view.state.replaceSelection("  "));
+  return true;
 }
 
 function compactCompletionDetail(value: string): string {
@@ -595,16 +924,30 @@ function dropIntoComposer(event: DragEvent): void {
   dragDepth = 0;
   isDropTarget.value = false;
 
-  const text = readMessageTextDrop(event.dataTransfer);
-  if (props.thread === null || !canEdit.value || text.trim().length === 0) {
+  if (props.thread === null || !canEdit.value) {
     return;
   }
 
-  emit("dropped", text);
+  const imageFiles = imageFilesFromDataTransfer(event.dataTransfer);
+  if (imageFiles.length > 0) {
+    void uploadImageFiles(imageFiles);
+    return;
+  }
+
+  const text = readMessageTextDrop(event.dataTransfer);
+  if (text.trim().length === 0) {
+    return;
+  }
+
+  const currentDraft = currentEditorText();
+  replaceEditorDraft(appendDroppedText(currentDraft, text), true);
+  scheduleDraftSave();
 }
 
 function updateComposerDropFeedback(event: DragEvent): void {
-  const canDrop = canEdit.value && canDropMessageText(event.dataTransfer);
+  const canDrop =
+    canEdit.value &&
+    (canDropMessageText(event.dataTransfer) || hasImageFileData(event.dataTransfer));
   isDropTarget.value = canDrop;
   if (event.dataTransfer !== null) {
     event.dataTransfer.dropEffect = canDrop ? "copy" : "none";
@@ -620,8 +963,43 @@ async function pickImages(event: Event): Promise<void> {
     return;
   }
 
+  await uploadImageFiles(files);
+}
+
+function imageFilesFromDataTransfer(dataTransfer: DataTransfer | null): File[] {
+  if (dataTransfer === null) {
+    return [];
+  }
+
+  return [...dataTransfer.files].filter(isSupportedImageFile);
+}
+
+function hasImageFileData(dataTransfer: DataTransfer | null): boolean {
+  if (dataTransfer === null) {
+    return false;
+  }
+
+  if (dataTransfer.files.length > 0) {
+    return imageFilesFromDataTransfer(dataTransfer).length > 0;
+  }
+
+  return [...dataTransfer.items].some(
+    (item) => item.kind === "file" && IMAGE_MIME_TYPES.has(item.type)
+  );
+}
+
+function isSupportedImageFile(file: File): boolean {
+  return IMAGE_MIME_TYPES.has(file.type);
+}
+
+async function uploadImageFiles(files: readonly File[]): Promise<void> {
+  const imageFiles = files.filter(isSupportedImageFile);
+  if (imageFiles.length === 0) {
+    return;
+  }
+
   const remaining = MAX_ATTACHMENTS - attachments.value.length;
-  if (files.length > remaining) {
+  if (imageFiles.length > remaining) {
     notifyError(
       new Error(`A message can include at most ${MAX_ATTACHMENTS} images`),
       "Too many images"
@@ -631,7 +1009,7 @@ async function pickImages(event: Event): Promise<void> {
 
   uploading.value = true;
   try {
-    for (const file of files) {
+    for (const file of imageFiles) {
       const response = await apiClient.uploadImage(file);
       attachments.value = [
         ...attachments.value,
@@ -658,9 +1036,40 @@ function removeAttachment(id: string): void {
 
 function sendComposer(): void {
   emit("send", {
+    draftMarkdown: currentEditorText(),
     attachmentIds: attachments.value.map((item) => item.attachment.id),
-    onSuccess: clearAttachments
+    onSuccess: () => {
+      replaceEditorDraft("");
+      clearAttachments();
+    }
   });
+}
+
+function replaceEditorDraft(nextDraft: string, markUserEdit = false): void {
+  setLocalDraft(nextDraft, markUserEdit);
+  if (editorView === null || editorView.state.doc.toString() === nextDraft) {
+    return;
+  }
+
+  applyingExternalDraft = true;
+  editorView.dispatch({
+    changes: { from: 0, to: editorView.state.doc.length, insert: nextDraft },
+    selection: { anchor: nextDraft.length }
+  });
+  applyingExternalDraft = false;
+}
+
+function setLocalDraft(nextDraft: string, markUserEdit = false): void {
+  lastLocalDraft = nextDraft;
+  editorDraft.value = nextDraft;
+  if (markUserEdit) {
+    lastLocalEditAt = Date.now();
+  }
+  emit("draft", nextDraft);
+}
+
+function currentEditorText(): string {
+  return editorView?.state.doc.toString() ?? editorDraft.value;
 }
 
 function clearAttachments(): void {
@@ -689,15 +1098,6 @@ function saveDraftNow(): void {
   emit("save-draft");
 }
 
-function onScroll(): void {
-  if (scrollContainer.value === null) {
-    return;
-  }
-
-  scrollTop.value = scrollContainer.value.scrollTop;
-  viewportHeight.value = scrollContainer.value.clientHeight;
-}
-
 async function openDebugDrawer(): Promise<void> {
   debugDrawerOpen.value = true;
   if (props.thread === null) {
@@ -716,6 +1116,38 @@ async function openDebugDrawer(): Promise<void> {
 
 async function respondApproval(id: string, decision: ApprovalDecision): Promise<void> {
   await approvals.respond(id, decision);
+}
+
+function openRenameDialog(): void {
+  if (!canRenameThread.value || props.thread === null) {
+    return;
+  }
+
+  renameDraft.value = props.thread.threadName;
+  renameDialogOpen.value = true;
+}
+
+async function renameThread(): Promise<void> {
+  if (props.thread === null || !canRenameThread.value) {
+    return;
+  }
+
+  const name = renameDraft.value.trim();
+  if (name.length === 0 || name === props.thread.threadName) {
+    renameDialogOpen.value = false;
+    return;
+  }
+
+  renaming.value = true;
+  try {
+    const thread = await apiClient.renameThread(props.thread.id, name);
+    emit("thread-updated", thread);
+    renameDialogOpen.value = false;
+  } catch (error) {
+    notifyError(error, "Failed to rename thread");
+  } finally {
+    renaming.value = false;
+  }
 }
 
 function approvalPartStatus(approvalId: string, fallback: string): string {
@@ -752,13 +1184,31 @@ function formatTimestamp(value: number): string {
   return new Date(value).toLocaleString();
 }
 
-function formatBytes(value: number): string {
-  if (value < 1024) {
-    return `${value} B`;
+function formatMessageTime(value: number): string {
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatMessageDelta(previous: number | null, current: number): string {
+  if (previous === null) {
+    return "first reply";
   }
-  if (value < 1024 * 1024) {
-    return `${(value / 1024).toFixed(1)} KB`;
+
+  const seconds = Math.max(0, Math.round((current - previous) / 1000));
+  if (seconds < 60) {
+    return `+${seconds}s`;
   }
-  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) {
+    return remainingSeconds === 0 ? `+${minutes}m` : `+${minutes}m ${remainingSeconds}s`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0 ? `+${hours}h` : `+${hours}h ${remainingMinutes}m`;
 }
 </script>

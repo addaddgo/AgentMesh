@@ -33,6 +33,10 @@ export const useMessageStore = defineStore("messages", {
       }
     },
 
+    setThreadMessages(threadId: string, messages: readonly ChatMessage[]): void {
+      this.byThreadId[threadId] = [...messages];
+    },
+
     async loadQueue(threadId: string): Promise<void> {
       try {
         const response = await apiClient.listThreadQueue(threadId);

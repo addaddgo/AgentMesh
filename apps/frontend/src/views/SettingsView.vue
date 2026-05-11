@@ -2,9 +2,7 @@
   <section class="content-page app-server-page">
     <header class="page-header">
       <div>
-        <p class="eyebrow">Configuration</p>
-        <h1>App Servers</h1>
-        <p>Configure local and SSH Codex app-server processes, then manage their lifecycle.</p>
+        <h1>App Servers Configuration</h1>
       </div>
       <el-button
         :icon="Refresh"
@@ -96,6 +94,15 @@
 
           <el-form-item label="Workspace" :error="fieldError('workspace')">
             <el-input v-model="form.workspace" placeholder="/absolute/path/to/workspace" />
+          </el-form-item>
+
+          <el-form-item label="Environment" :error="fieldError('environment')">
+            <el-input
+              v-model="form.environmentText"
+              type="textarea"
+              :rows="5"
+              placeholder="OPENAI_API_KEY=...\nHTTPS_PROXY=http://127.0.0.1:7890"
+            />
           </el-form-item>
 
           <div v-if="form.hostKind === 'ssh'" class="form-grid">
@@ -215,6 +222,7 @@ type AppServerForm = {
   sshPort: number | undefined;
   workspace: string;
   command: string;
+  environmentText: string;
 };
 
 const hostKindOptions = [
@@ -247,7 +255,8 @@ function emptyForm(): AppServerForm {
     sshUser: "",
     sshPort: undefined,
     workspace: "",
-    command: ""
+    command: "",
+    environmentText: ""
   };
 }
 
@@ -267,6 +276,7 @@ function editServer(server: AppServerDto): void {
   form.sshPort = server.sshPort ?? undefined;
   form.workspace = server.workspace;
   form.command = server.command;
+  form.environmentText = formatEnvironment(server.environment);
 }
 
 function resetForm(): void {
@@ -304,7 +314,8 @@ function toPayload(): CreateAppServerPayload {
     hostKind: form.hostKind,
     workspace: form.workspace,
     ...(form.name.trim().length > 0 ? { name: form.name } : {}),
-    ...(form.command.trim().length > 0 ? { command: form.command } : {})
+    ...(form.command.trim().length > 0 ? { command: form.command } : {}),
+    environment: parseEnvironmentText(form.environmentText)
   };
 
   if (form.hostKind === "ssh") {
@@ -317,6 +328,40 @@ function toPayload(): CreateAppServerPayload {
   }
 
   return payload;
+}
+
+function parseEnvironmentText(value: string): Record<string, string> {
+  const environment: Record<string, string> = {};
+
+  for (const [index, rawLine] of value.split(/\r?\n/u).entries()) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      throw new ApiClientError(`Invalid environment line ${index + 1}`, 400, {
+        error: {
+          code: "validation_error",
+          message: "Environment variables must use KEY=value lines",
+          details: [{ path: ["environment"], message: `Line ${index + 1} is not KEY=value` }]
+        }
+      });
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const envValue = line.slice(separatorIndex + 1);
+    environment[key] = envValue;
+  }
+
+  return environment;
+}
+
+function formatEnvironment(environment: Readonly<Record<string, string>>): string {
+  return Object.entries(environment)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
 }
 
 async function runLifecycle(action: "start" | "stop" | "restart"): Promise<void> {

@@ -28,7 +28,7 @@
       <section class="selection-panel">
         <div class="sidebar-title">
           <strong>Available skills</strong>
-          <el-tag>{{ filteredSkills.length }} / {{ skills.skills.length }}</el-tag>
+          <el-tag>{{ filteredSkills.length }} / {{ skills.sourceSkills.length }}</el-tag>
           <span class="viewing-target-name">{{ viewedAppServerName }}</span>
         </div>
 
@@ -40,11 +40,7 @@
           placeholder="Search skills"
         />
 
-        <el-empty
-          v-if="viewedAppServerId === null"
-          description="Click a target app-server to load Codex skills"
-        />
-        <el-empty v-else-if="skills.skills.length === 0" description="No Codex skills found" />
+        <el-empty v-if="skills.sourceSkills.length === 0" description="No skills found" />
         <div v-else-if="filteredSkills.length === 0" class="selection-list-scroll">
           <el-empty description="No matching skills" />
         </div>
@@ -211,10 +207,10 @@ const viewedAppServerName = computed(() =>
 const filteredSkills = computed(() => {
   const query = skillSearch.value.trim().toLowerCase();
   if (query.length === 0) {
-    return skills.skills;
+    return skills.sourceSkills;
   }
 
-  return skills.skills.filter(
+  return skills.sourceSkills.filter(
     (skill) =>
       skill.name.toLowerCase().includes(query) ||
       skill.description.toLowerCase().includes(query)
@@ -226,26 +222,21 @@ onMounted(() => {
 });
 
 async function refreshSkills(): Promise<void> {
-  if (viewedAppServerId.value === null) {
-    return;
-  }
-
-  await skills.loadCodexSkills(viewedAppServerId.value);
+  await skills.load();
 }
 
 async function initializeSkillsPage(): Promise<void> {
+  await skills.load();
   await appServers.load();
   const firstOnlineServer =
     appServers.appServers.find((server) => server.status === "online") ?? appServers.appServers[0];
   if (firstOnlineServer !== undefined) {
-    viewTargetAppServer(firstOnlineServer.id);
+    await viewTargetAppServer(firstOnlineServer.id);
   }
 }
 
 async function viewTargetAppServer(appServerId: string): Promise<void> {
   viewedAppServerId.value = appServerId;
-  skills.showCachedCodexSkills(appServerId);
-  skills.refreshCodexSkillsInBackground(appServerId);
   await loadTargetSkills();
 }
 

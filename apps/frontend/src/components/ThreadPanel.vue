@@ -725,7 +725,8 @@ function workspaceEntryCompletion(entry: WorkspaceEntryDto): Completion {
 
 async function completeSkill(from: number): Promise<CompletionResult> {
   const appServerId = props.appServer?.id;
-  const codexSkills = appServerId === undefined ? [] : await cachedCodexSkills(appServerId);
+  const codexSkills =
+    appServerId === undefined ? [] : await cachedCodexSkills(appServerId, { refreshInBackground: true });
 
   return {
     from,
@@ -774,9 +775,22 @@ async function cachedCodexCommands(appServerId: string): Promise<readonly CodexC
   return commands;
 }
 
-async function cachedCodexSkills(appServerId: string): Promise<readonly SkillDto[]> {
+async function cachedCodexSkills(
+  appServerId: string,
+  options: { readonly refreshInBackground?: boolean } = {}
+): Promise<readonly SkillDto[]> {
   const cached = skillCompletionCache.get(appServerId);
   if (cached !== undefined) {
+    if (options.refreshInBackground === true) {
+      void apiClient
+        .listCodexSkills(appServerId)
+        .then((skills) => {
+          skillCompletionCache.set(appServerId, skills);
+        })
+        .catch((error: unknown) => {
+          notifyError(error, "Failed to refresh Codex skills");
+        });
+    }
     return cached;
   }
 

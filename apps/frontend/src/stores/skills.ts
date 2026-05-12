@@ -6,20 +6,26 @@ import { notifyError } from "./errors";
 
 type SkillState = {
   skills: SkillDto[];
+  codexSkillsByAppServerId: Record<string, SkillDto[]>;
+  activeCodexAppServerId: string | null;
   selectedSkillNames: string[];
   selectedAppServerIds: string[];
   syncResults: SkillSyncResultDto[];
   loading: boolean;
+  loadingByAppServerId: Record<string, boolean>;
   syncing: boolean;
 };
 
 export const useSkillStore = defineStore("skills", {
   state: (): SkillState => ({
     skills: [],
+    codexSkillsByAppServerId: {},
+    activeCodexAppServerId: null,
     selectedSkillNames: [],
     selectedAppServerIds: [],
     syncResults: [],
     loading: false,
+    loadingByAppServerId: {},
     syncing: false
   }),
 
@@ -47,6 +53,59 @@ export const useSkillStore = defineStore("skills", {
       } finally {
         this.loading = false;
       }
+    },
+
+    async loadCodexSkills(appServerId: string): Promise<void> {
+      this.loading = true;
+      this.loadingByAppServerId[appServerId] = true;
+      try {
+        await this.refreshCodexSkills(appServerId);
+      } finally {
+        this.loading = false;
+        this.loadingByAppServerId[appServerId] = false;
+      }
+    },
+
+    refreshCodexSkillsInBackground(appServerId: string): void {
+      if (this.loadingByAppServerId[appServerId] === true) {
+        return;
+      }
+
+      this.loadingByAppServerId[appServerId] = true;
+      void this.refreshCodexSkills(appServerId).finally(() => {
+        this.loadingByAppServerId[appServerId] = false;
+      });
+    },
+
+    async refreshCodexSkills(appServerId: string): Promise<void> {
+      try {
+        const codexSkills = [...(await apiClient.listCodexSkills(appServerId))];
+        this.codexSkillsByAppServerId[appServerId] = codexSkills;
+        if (this.activeCodexAppServerId === appServerId) {
+          this.setVisibleSkills(codexSkills);
+        }
+      } catch (error) {
+        notifyError(error, "Failed to load Codex skills");
+      }
+    },
+
+    showCachedCodexSkills(appServerId: string): void {
+      this.activeCodexAppServerId = appServerId;
+      const cached = this.codexSkillsByAppServerId[appServerId];
+      if (cached === undefined) {
+        this.setVisibleSkills([]);
+        return;
+      }
+
+      this.setVisibleSkills(cached);
+    },
+
+    setVisibleSkills(nextSkills: readonly SkillDto[]): void {
+      this.skills = [...nextSkills];
+      const availableSkillNames = new Set(this.skills.map((skill) => skill.name));
+      this.selectedSkillNames = this.selectedSkillNames.filter((name) =>
+        availableSkillNames.has(name)
+      );
     },
 
     setSelectedSkillNames(names: readonly string[]): void {

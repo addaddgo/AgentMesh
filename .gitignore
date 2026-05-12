@@ -35,3 +35,4 @@ packages/
 workspace_test**
 tmp
 apps/myskills
+ccx/ccx-data

@@ -29,6 +29,7 @@
         <div class="sidebar-title">
           <strong>Available skills</strong>
           <el-tag>{{ filteredSkills.length }} / {{ skills.skills.length }}</el-tag>
+          <span class="viewing-target-name">{{ viewedAppServerName }}</span>
         </div>
 
         <el-input
@@ -39,7 +40,11 @@
           placeholder="Search skills"
         />
 
-        <el-empty v-if="skills.skills.length === 0" description="No skills found" />
+        <el-empty
+          v-if="viewedAppServerId === null"
+          description="Click a target app-server to load Codex skills"
+        />
+        <el-empty v-else-if="skills.skills.length === 0" description="No Codex skills found" />
         <div v-else-if="filteredSkills.length === 0" class="selection-list-scroll">
           <el-empty description="No matching skills" />
         </div>
@@ -217,15 +222,30 @@ const filteredSkills = computed(() => {
 });
 
 onMounted(() => {
-  void Promise.all([skills.load(), appServers.load()]);
+  void initializeSkillsPage();
 });
 
 async function refreshSkills(): Promise<void> {
-  await skills.load();
+  if (viewedAppServerId.value === null) {
+    return;
+  }
+
+  await skills.loadCodexSkills(viewedAppServerId.value);
+}
+
+async function initializeSkillsPage(): Promise<void> {
+  await appServers.load();
+  const firstOnlineServer =
+    appServers.appServers.find((server) => server.status === "online") ?? appServers.appServers[0];
+  if (firstOnlineServer !== undefined) {
+    viewTargetAppServer(firstOnlineServer.id);
+  }
 }
 
 async function viewTargetAppServer(appServerId: string): Promise<void> {
   viewedAppServerId.value = appServerId;
+  skills.showCachedCodexSkills(appServerId);
+  skills.refreshCodexSkillsInBackground(appServerId);
   await loadTargetSkills();
 }
 

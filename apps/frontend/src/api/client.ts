@@ -47,7 +47,9 @@ import type {
   UiLayoutPutResponse,
   WorkspaceEntryDto,
   WorkspaceEntryListResponse,
-  UploadImageResponse
+  UploadImageResponse,
+  WorkspaceUsageDto,
+  WorkspaceUsageResponse,
 } from "@agentmesh/shared";
 
 export class ApiClientError extends Error {
@@ -256,6 +258,11 @@ export class ApiClient {
       }).toString()}`
     );
     return response.events;
+  }
+
+  public async getWorkspaceUsage(): Promise<readonly WorkspaceUsageDto[]> {
+    const response = await this.request<WorkspaceUsageResponse>("/api/stats/workspace-usage");
+    return response.workspaces;
   }
 
   public sendMessage(payload: SendTextMessageRequest): Promise<SendMessageResponse> {

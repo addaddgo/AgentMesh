@@ -14,6 +14,7 @@ import { registerHealthRoutes } from "./routes/health.js";
 import { registerMessageRoutes } from "./routes/messages.js";
 import { registerMcpRoutes } from "./routes/mcp.js";
 import { registerSkillRoutes } from "./routes/skills.js";
+import { registerStatsRoutes } from "./routes/stats.js";
 import { registerThreadRoutes } from "./routes/threads.js";
 import { registerUploadRoutes } from "./routes/uploads.js";
 import { registerUiRoutes } from "./routes/ui.js";
@@ -81,6 +82,7 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
   await registerUploadRoutes(app);
   await registerApprovalRoutes(app);
   await registerSkillRoutes(app);
+  await registerStatsRoutes(app);
   await registerUiRoutes(app);
 
   await registerTodoRoutes(app);

@@ -25,6 +25,7 @@ const splitPaneTreeSchema: z.ZodTypeAny = z.lazy(() =>
     z
       .object({
         type: z.literal("leaf"),
+        kind: z.enum(["thread", "stats"]).optional(),
         id: z.string().min(1),
         appServerId: z.string().min(1).optional(),
         threadId: z.string().min(1).optional()

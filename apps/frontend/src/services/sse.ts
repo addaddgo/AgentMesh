@@ -61,6 +61,7 @@ export class SseClient {
       "approval.updated",
       "queue.item_updated",
       "skill.sync_completed",
+      "todo.updated",
       "error"
     ]) {
       source.addEventListener(eventType, (message) => {

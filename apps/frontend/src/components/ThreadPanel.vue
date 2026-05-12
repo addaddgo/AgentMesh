@@ -430,7 +430,7 @@ const threadApprovals = computed<readonly ApprovalDto[]>(() => {
     return [];
   }
 
-  return approvals.byThreadId(props.thread.id);
+  return approvals.byThreadId(props.thread.id).filter((a) => a.status === "pending");
 });
 const isWorking = computed(
   () =>
@@ -573,7 +573,21 @@ onMounted(() => {
           },
           {
             key: "Enter",
-            run: acceptCompletion
+            run: (view) => {
+              // Accept completion if active, otherwise send
+              if (acceptCompletion(view)) {
+                return true;
+              }
+              sendComposer();
+              return true;
+            }
+          },
+          {
+            key: "Mod-Enter",
+            run: (view) => {
+              view.dispatch({ changes: { from: view.state.selection.main.head, insert: "\n" } });
+              return true;
+            }
           },
           {
             key: "Tab",

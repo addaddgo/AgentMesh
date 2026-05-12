@@ -24,7 +24,8 @@
     </Teleport>
 
     <main class="thread-canvas">
-      <div v-if="threadLeaves.length > 0" class="thread-card-flow">
+      <div v-if="threadLeaves.length > 0 || todoPanelVisible" class="thread-card-flow">
+        <TodoPanel v-if="todoPanelVisible" class="thread-card" @close="todoPanelVisible = false" />
         <article
           v-for="leaf in threadLeaves"
           :key="leaf.id"
@@ -51,12 +52,15 @@
             @close="closeThreadPane(leaf.id)"
           />
         </article>
+        
       </div>
 
       <el-empty v-else description="Click Add, then select an app-server and thread." />
     </main>
 
-    <el-dialog v-model="addDialogOpen" title="Add Thread" width="860px">
+    <el-dialog v-model="addDialogOpen" title="" width="860px">
+      <el-tabs>
+        <el-tab-pane label="Add Thread">
       <div class="dialog-toolbar">
         <el-button
           :icon="Refresh"
@@ -163,6 +167,16 @@
           </div>
         </section>
       </div>
+      </el-tab-pane>
+      <el-tab-pane label="Tools">
+        <div class="tools-panel">
+          <label class="tool-option">
+            <el-checkbox v-model="todoPanelVisible" />
+            <span>Todo</span>
+          </label>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
       <template #footer>
         <div class="dialog-actions">
           <el-button
@@ -206,9 +220,10 @@ import type {
   SplitPaneTree,
   ThreadDto
 } from "@agentmesh/shared";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 
 import ThreadPanel from "../components/ThreadPanel.vue";
+import TodoPanel from "../components/TodoPanel.vue";
 import { apiClient } from "../api/client";
 import { useAppServerStore } from "../stores/appServers";
 import { useMessageStore } from "../stores/messages";
@@ -239,6 +254,10 @@ const newThreadNameByAppServerId = ref<Record<string, string>>({});
 const creatingThreadByAppServerId = ref<Record<string, boolean>>({});
 const resumingThreadById = ref<Record<string, boolean>>({});
 const addDialogOpen = ref(false);
+const todoPanelVisible = ref(localStorage.getItem("todoPanelVisible") === "true");
+watch(todoPanelVisible, (visible) => {
+  localStorage.setItem("todoPanelVisible", String(visible));
+});
 
 const selectedAppServer = computed(() =>
   selectedAppServerId.value === null ? null : serverById(selectedAppServerId.value)

@@ -17,6 +17,7 @@ import { registerSkillRoutes } from "./routes/skills.js";
 import { registerThreadRoutes } from "./routes/threads.js";
 import { registerUploadRoutes } from "./routes/uploads.js";
 import { registerUiRoutes } from "./routes/ui.js";
+import { registerTodoRoutes } from "./routes/todos.js";
 import { AppServerLifecycleRegistry } from "./services/app-server-lifecycle.js";
 import { AppServerService } from "./services/app-servers.js";
 import { EventService } from "./services/events.js";
@@ -82,6 +83,7 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
   await registerSkillRoutes(app);
   await registerUiRoutes(app);
 
+  await registerTodoRoutes(app);
   return app;
 }
 

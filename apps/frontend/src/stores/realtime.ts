@@ -16,6 +16,7 @@ import { notifyError, notifyInfo } from "./errors";
 import { useMessageStore } from "./messages";
 import { useThreadStore } from "./threads";
 import { useUiLayoutStore } from "./uiLayout";
+import { useTodoStore } from "./todos";
 
 type RealtimeState = {
   connected: boolean;
@@ -162,6 +163,11 @@ export const useRealtimeStore = defineStore("realtime", {
           }
           case "skill.sync_completed":
             break;
+          case "todo.updated": {
+            const todoStore = useTodoStore();
+            await todoStore.load();
+            break;
+          }
         }
       } catch (error) {
         notifyError(error, "Failed to process realtime event");

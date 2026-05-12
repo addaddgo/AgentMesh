@@ -317,7 +317,33 @@ export const MIGRATIONS: readonly Migration[] = [
       )
       WHERE parent_codex_thread_id IS NOT NULL;
     `
-  }
+  },
+  {
+    id: "0005_todos",
+    sql: `
+      CREATE TABLE IF NOT EXISTS todos (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        sort_index INTEGER NOT NULL DEFAULT 0,
+        due_at INTEGER,
+        done INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1)),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS todos_sort_index_idx
+        ON todos (sort_index);
+    `
+  },
+  {
+    id: "0006_todos_category",
+    sql: `
+      ALTER TABLE todos
+        ADD COLUMN category TEXT;
+    `
+  },
+
 ];
 
 export function runMigrations(sqlite: Database): void {

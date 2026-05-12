@@ -123,7 +123,7 @@ function detailsFromValue(value: unknown): ApprovalDetail[] {
 
 function summarizeValue(value: unknown): string {
   if (typeof value === "string") {
-    return value.length > 160 ? `${value.slice(0, 157)}...` : value;
+    return value;
   }
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);

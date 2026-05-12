@@ -315,3 +315,21 @@ export const threadDrafts = sqliteTable(
     index("thread_drafts_thread_idx").on(table.threadId)
   ]
 );
+
+export const todos = sqliteTable(
+  "todos",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    category: text("category"),
+    sortIndex: integer("sort_index").notNull().default(0),
+    dueAt: integer("due_at", { mode: "timestamp_ms" }),
+    done: integer("done", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [
+    index("todos_sort_index_idx").on(table.sortIndex)
+  ]
+);

@@ -1,5 +1,9 @@
 import type {
   ApiErrorResponse,
+  TodoItemDto,
+  TodoCreateRequest,
+  TodoUpdateRequest,
+  TodoReorderRequest,
   AppServerDto,
   AppServerListResponse,
   ApprovalDecision,
@@ -353,6 +357,44 @@ export class ApiClient {
       method: "PUT",
       body: payload
     });
+  }
+  public async listTodos(): Promise<readonly TodoItemDto[]> {
+    const response = await this.request<{ readonly items: readonly TodoItemDto[] }>("/api/todos");
+    return response.items;
+  }
+
+  public async createTodo(payload: TodoCreateRequest): Promise<TodoItemDto> {
+    const response = await this.request<{ readonly item: TodoItemDto }>("/api/todos", {
+      method: "POST",
+      body: payload
+    });
+    return response.item;
+  }
+
+  public async updateTodo(id: string, payload: TodoUpdateRequest): Promise<TodoItemDto> {
+    const response = await this.request<{ readonly item: TodoItemDto }>(
+      `/api/todos/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        body: payload
+      }
+    );
+    return response.item;
+  }
+
+  public async deleteTodo(id: string): Promise<void> {
+    await this.request<void>(`/api/todos/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  public async reorderTodos(payload: TodoReorderRequest): Promise<readonly TodoItemDto[]> {
+    const response = await this.request<{ readonly items: readonly TodoItemDto[] }>(
+      "/api/todos/reorder",
+      {
+        method: "PUT",
+        body: payload
+      }
+    );
+    return response.items;
   }
 
   private async request<T>(

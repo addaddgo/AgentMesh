@@ -516,7 +516,7 @@ function toThreadDto(
     parentCodexThreadId: row.parent_codex_thread_id,
     agentName: row.agent_name,
     title: row.title,
-    status: cachedStatus ?? "notLoaded",
+    status: appServerStatus === "online" ? (cachedStatus ?? "notLoaded") : "notLoaded",
     cwd: row.cwd,
     isCurrent: row.is_current === 1,
     isGone: row.is_gone === 1,

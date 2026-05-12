@@ -36,7 +36,7 @@
           class="bar-row"
         >
           <div class="bar-label" :title="bar.workspace">
-            {{ bar.workspace }}
+            {{ bar.workspaceName }}
           </div>
           <div class="bar-track">
             <div
@@ -97,6 +97,7 @@ const totalTurns = computed(() =>
 const bars = computed(() =>
   data.value.map((d) => ({
     ...d,
+    workspaceName: d.workspace.replace(/\/+$/u, "").split("/").at(-1) ?? d.workspace,
     percent: (d.totalDurationMs / maxDuration.value) * 100
   }))
 );

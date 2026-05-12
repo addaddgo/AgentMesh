@@ -79,6 +79,9 @@ export class AppServerLifecycleRegistry {
     transport.onProcessClose((exit) => {
       this.handleProcessExit(entry, exit);
     });
+    transport.onProtocolError((error) => {
+      this.recordProtocolError(id, error);
+    });
     transport.onAnyServerRequest((request, rawLine) => {
       try {
         this.approvals.handleServerRequest(id, request, rawLine);
@@ -281,6 +284,36 @@ export class AppServerLifecycleRegistry {
       appServerId,
       payload: {
         message: errorMessage(error)
+      }
+    });
+  }
+
+  private recordProtocolError(
+    appServerId: string,
+    error: { readonly message: string; readonly raw: string; readonly receivedAt: number }
+  ): void {
+    this.database.sqlite
+      .prepare(
+        `
+          INSERT INTO codex_events (id, app_server_id, thread_id, turn_id, event_type, raw_json, created_at)
+          VALUES (?, ?, NULL, NULL, 'protocol.error', ?, ?)
+        `
+      )
+      .run(
+        randomUUID(),
+        appServerId,
+        JSON.stringify({
+          message: error.message,
+          raw: error.raw
+        } satisfies JsonValue),
+        error.receivedAt
+      );
+
+    this.events.publish({
+      type: "error",
+      appServerId,
+      payload: {
+        message: error.message
       }
     });
   }

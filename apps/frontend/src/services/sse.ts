@@ -1,4 +1,6 @@
-import type { SseEvent } from "@agentmesh/shared";
+import { SSE_EVENT_TYPES, type SseEvent } from "@agentmesh/shared";
+
+import { eventBus } from "./eventBus";
 
 type Listener = (event: SseEvent) => void;
 type StateListener = (state: SseConnectionState) => void;
@@ -45,27 +47,15 @@ export class SseClient {
       }
     };
 
+    // Generic message handler for unnamed events
     source.onmessage = (message) => {
-      this.emitMessage(message.data);
+      this.dispatch(message.data);
     };
 
-    for (const eventType of [
-      "app_server.status_changed",
-      "thread.list_changed",
-      "thread.imported",
-      "thread.gone",
-      "thread.message_added",
-      "thread.message_updated",
-      "turn.status_changed",
-      "approval.created",
-      "approval.updated",
-      "queue.item_updated",
-      "skill.sync_completed",
-      "todo.updated",
-      "error"
-    ]) {
+    // Named event handlers for each known event type
+    for (const eventType of SSE_EVENT_TYPES) {
       source.addEventListener(eventType, (message) => {
-        this.emitMessage((message as MessageEvent<string>).data);
+        this.dispatch((message as MessageEvent<string>).data);
       });
     }
   }
@@ -106,21 +96,25 @@ export class SseClient {
     }, delay);
   }
 
-  private emitMessage(data: string): void {
+  private dispatch(data: string): void {
+    let event: SseEvent;
     try {
-      const event = JSON.parse(data) as SseEvent;
-      for (const listener of this.listeners) {
-        listener(event);
-      }
+      event = JSON.parse(data) as SseEvent;
     } catch {
-      for (const listener of this.listeners) {
-        listener({
-          id: `client_parse_error_${Date.now()}`,
-          type: "error",
-          payload: { message: "Failed to parse server event" },
-          created_at: Date.now()
-        });
-      }
+      event = {
+        id: `client_parse_error_${Date.now()}`,
+        type: "error",
+        payload: { message: "Failed to parse server event" },
+        created_at: Date.now()
+      };
+    }
+
+    // Push to event bus
+    void eventBus.emit(event);
+
+    // Also notify legacy subscribers
+    for (const listener of this.listeners) {
+      listener(event);
     }
   }
 

@@ -564,13 +564,26 @@ export class MessageSendService {
     payload: SendPayload,
     input: readonly JsonValue[]
   ): Promise<JsonValue> {
+    const requestParams = withDefinedValues({
+      threadId: payload.codexThreadId,
+      input,
+      ...this.getThreadSettings(item.threadId)
+    }) satisfies JsonValue;
+
+    this.codexEvents.store({
+      appServerId: item.appServerId,
+      threadId: item.threadId,
+      turnId,
+      eventType: "turn/start.request",
+      raw: {
+        method: "turn/start",
+        params: requestParams
+      }
+    });
+
     return transport.requestObserved(
       "turn/start",
-      withDefinedValues({
-        threadId: payload.codexThreadId,
-        input,
-        ...this.getThreadSettings(item.threadId)
-      }) satisfies JsonValue,
+      requestParams,
       (response, rawLine, method) => {
         this.storeCodexObservedEvent(item, turnId, response, rawLine, `${method}.response`);
       }

@@ -4,11 +4,13 @@ import type {
   ChatMessage,
   QueueItemDto,
   SseEvent,
+  SseEventType,
   TurnDto
 } from "@agentmesh/shared";
 import { defineStore } from "pinia";
 
 import { apiClient } from "../api/client";
+import { eventBus } from "../services/eventBus";
 import { sseClient, type SseConnectionState } from "../services/sse";
 import { useAppServerStore } from "./appServers";
 import { useApprovalStore } from "./approvals";
@@ -21,12 +23,14 @@ import { useTodoStore } from "./todos";
 type RealtimeState = {
   connected: boolean;
   started: boolean;
+  _unsubDispatchers: (() => void) | null;
 };
 
 export const useRealtimeStore = defineStore("realtime", {
   state: (): RealtimeState => ({
     connected: false,
-    started: false
+    started: false,
+    _unsubDispatchers: null
   }),
 
   actions: {
@@ -38,9 +42,8 @@ export const useRealtimeStore = defineStore("realtime", {
       this.started = true;
       let previousState: SseConnectionState = "closed";
 
-      sseClient.subscribe((event) => {
-        void this.handleEvent(event);
-      });
+      // Register all event dispatchers
+      this._unsubDispatchers = this.registerDispatchers();
 
       sseClient.subscribeState((state) => {
         const uiLayout = useUiLayoutStore();
@@ -60,6 +63,8 @@ export const useRealtimeStore = defineStore("realtime", {
 
     stop(): void {
       sseClient.close();
+      this._unsubDispatchers?.();
+      this._unsubDispatchers = null;
       this.started = false;
       this.connected = false;
     },
@@ -84,94 +89,137 @@ export const useRealtimeStore = defineStore("realtime", {
       );
     },
 
-    async handleEvent(event: SseEvent): Promise<void> {
-      const appServers = useAppServerStore();
-      const threads = useThreadStore();
-      const messages = useMessageStore();
-      const approvals = useApprovalStore();
+    registerDispatchers(): () => void {
+      const unsubs: (() => void)[] = [];
 
-      try {
-        switch (event.type) {
-          case "app_server.status_changed": {
-            const appServer = readPayloadField<AppServerDto>(event.payload, "appServer");
-            if (appServer === null) {
-              await appServers.load();
-            } else {
-              appServers.upsert(appServer);
-            }
-            break;
+      // --- AppServer ---
+      unsubs.push(
+        eventBus.on("app_server.status_changed", async (event) => {
+          const appServer = readPayloadField<AppServerDto>(event.payload, "appServer");
+          const appServers = useAppServerStore();
+          const threads = useThreadStore();
+          const approvals = useApprovalStore();
+
+          if (appServer === null) {
+            await appServers.load();
+          } else {
+            appServers.upsert(appServer);
           }
-          case "thread.list_changed": {
-            if (event.app_server_id !== undefined) {
-              await threads.loadForAppServer(event.app_server_id);
-            }
-            break;
+
+          // App-server state change cascades to threads and approvals
+          const appServerId = appServer?.id ?? event.app_server_id;
+          if (appServerId !== undefined) {
+            await Promise.all([
+              threads.loadForAppServer(appServerId),
+              approvals.load()
+            ]);
           }
-          case "thread.imported":
-          case "thread.gone": {
-            if (event.thread_id !== undefined) {
-              const thread = await apiClient.getThread(event.thread_id);
-              threads.upsertThread(thread);
-            }
-            break;
+        })
+      );
+
+      // --- Thread list ---
+      unsubs.push(
+        eventBus.on("thread.list_changed", async (event) => {
+          if (event.app_server_id !== undefined) {
+            const threads = useThreadStore();
+            await threads.loadForAppServer(event.app_server_id);
           }
-          case "thread.message_added":
-          case "thread.message_updated": {
-            const message = readPayloadField<ChatMessage>(event.payload, "message");
-            if (message !== null) {
-              messages.upsertMessage(message);
-            } else if (event.thread_id !== undefined) {
-              await messages.load(event.thread_id);
-            }
-            break;
+        })
+      );
+
+      // --- Thread imported / gone ---
+      unsubs.push(
+        eventBus.on(["thread.imported", "thread.gone"], async (event) => {
+          if (event.thread_id !== undefined) {
+            const threads = useThreadStore();
+            const thread = await apiClient.getThread(event.thread_id);
+            threads.upsertThread(thread);
           }
-          case "turn.status_changed": {
-            const turn = readPayloadField<TurnDto>(event.payload, "turn");
-            if (turn !== null) {
-              messages.upsertTurn(turn);
-              if (["completed", "failed"].includes(turn.status)) {
+        })
+      );
+
+      // --- Messages ---
+      unsubs.push(
+        eventBus.on(["thread.message_added", "thread.message_updated"], async (event) => {
+          const message = readPayloadField<ChatMessage>(event.payload, "message");
+          const messages = useMessageStore();
+          if (message !== null) {
+            messages.upsertMessage(message);
+          } else if (event.thread_id !== undefined) {
+            await messages.load(event.thread_id);
+          }
+        })
+      );
+
+      // --- Queue item ---
+      unsubs.push(
+        eventBus.on("queue.item_updated", async (event) => {
+          const item = readPayloadField<QueueItemDto>(event.payload, "item");
+          const messages = useMessageStore();
+          if (item !== null) {
+            messages.upsertQueueItem(item);
+          } else if (event.thread_id !== undefined) {
+            await messages.loadQueue(event.thread_id);
+          }
+        })
+      );
+
+      // --- Turn status ---
+      unsubs.push(
+        eventBus.on("turn.status_changed", async (event) => {
+          const turn = readPayloadField<TurnDto>(event.payload, "turn");
+          const messages = useMessageStore();
+          const threads = useThreadStore();
+          if (turn !== null) {
+            messages.upsertTurn(turn);
+            // Completed/failed turns imply thread status may have changed
+            if (["completed", "failed"].includes(turn.status)) {
+              try {
                 const thread = await apiClient.getThread(turn.threadId);
                 threads.upsertThread(thread);
+              } catch {
+                // Thread may already be gone
               }
             }
-            break;
           }
-          case "approval.created":
-          case "approval.updated": {
-            const approval = readPayloadField<ApprovalDto>(event.payload, "approval");
-            if (approval !== null) {
-              approvals.upsert(approval);
-            } else {
-              await approvals.load();
-            }
-            break;
+        })
+      );
+
+      // --- Approvals ---
+      unsubs.push(
+        eventBus.on(["approval.created", "approval.updated"], async (event) => {
+          const approval = readPayloadField<ApprovalDto>(event.payload, "approval");
+          const approvals = useApprovalStore();
+          if (approval !== null) {
+            approvals.upsert(approval);
+          } else {
+            await approvals.load();
           }
-          case "queue.item_updated": {
-            const item = readPayloadField<QueueItemDto>(event.payload, "item");
-            if (item !== null) {
-              messages.upsertQueueItem(item);
-            } else if (event.thread_id !== undefined) {
-              await messages.loadQueue(event.thread_id);
-            }
-            break;
-          }
-          case "error": {
-            notifyError(
-              readPayloadField<string>(event.payload, "message") ?? "Backend event error"
-            );
-            break;
-          }
-          case "skill.sync_completed":
-            break;
-          case "todo.updated": {
-            const todoStore = useTodoStore();
-            await todoStore.load();
-            break;
-          }
+        })
+      );
+
+      // --- Todo ---
+      unsubs.push(
+        eventBus.on("todo.updated", async () => {
+          const todoStore = useTodoStore();
+          await todoStore.load();
+        })
+      );
+
+      // --- Error ---
+      unsubs.push(
+        eventBus.on("error", async (event) => {
+          notifyError(
+            readPayloadField<string>(event.payload, "message") ?? "Backend event error"
+          );
+        })
+      );
+
+      return () => {
+        for (const unsub of unsubs) {
+          unsub();
         }
-      } catch (error) {
-        notifyError(error, "Failed to process realtime event");
-      }
+      };
     }
   }
 });

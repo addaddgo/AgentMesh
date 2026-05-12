@@ -60,15 +60,21 @@
         </div>
       </header>
 
-      <section v-if="threadApprovals.length > 0" class="thread-approval-stack">
+      <el-dialog
+        v-model="approvalVisible"
+        title="Approval Required"
+        width="640px"
+        :close-on-click-modal="false"
+        :close-on-press-escape="false"
+      >
         <ApprovalCard
-          v-for="approval in threadApprovals"
-          :key="approval.id"
-          :approval="approval"
-          :responding="approvals.isResponding(approval.id)"
+          v-if="pendingApproval !== null"
+          :key="pendingApproval.id"
+          :approval="pendingApproval"
+          :responding="approvals.isResponding(pendingApproval.id)"
           @respond="respondApproval"
         />
-      </section>
+      </el-dialog>
 
       <div ref="scrollContainer" class="message-list">
         <article
@@ -390,7 +396,9 @@ const attachments = ref<SelectedAttachment[]>([]);
 const uploading = ref(false);
 const isDropTarget = ref(false);
 const renameDialogOpen = ref(false);
+const approvalVisible = ref(false);
 const renameDraft = ref("");
+const dismissedApprovalIds = ref(new Set<string>());
 const renaming = ref(false);
 const editorDraft = ref(props.draft);
 const editableCompartment = new Compartment();
@@ -425,13 +433,21 @@ const canSend = computed(
     !uploading.value &&
     (editorDraft.value.trim().length > 0 || attachments.value.length > 0)
 );
-const threadApprovals = computed<readonly ApprovalDto[]>(() => {
+const pendingApproval = computed<ApprovalDto | null>(() => {
   if (props.thread === null) {
-    return [];
+    return null;
   }
 
-  return approvals.byThreadId(props.thread.id).filter((a) => a.status === "pending");
+  return approvals.byThreadId(props.thread.id).filter(
+    (a) => a.status === "pending"
+  ).filter(
+    (a) => !dismissedApprovalIds.value.has(a.id)
+  )[0] ?? null;
 });
+watch(pendingApproval, (next) => {
+  approvalVisible.value = next !== null;
+});
+
 const isWorking = computed(
   () =>
     props.messages.some((message) =>
@@ -1144,6 +1160,8 @@ async function openDebugDrawer(): Promise<void> {
 
 async function respondApproval(id: string, decision: ApprovalDecision): Promise<void> {
   await approvals.respond(id, decision);
+  dismissedApprovalIds.value = new Set([...dismissedApprovalIds.value, id]);
+  approvalVisible.value = false;
 }
 
 function openRenameDialog(): void {

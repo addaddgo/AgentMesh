@@ -79,7 +79,7 @@ const patchAppServerSchema = createAppServerSchema
 
 export async function registerAppServerRoutes(app: FastifyInstance): Promise<void> {
   const service = new AppServerService(app.database);
-  const threadSync = new ThreadSyncService(app.database, app.events);
+  const threadSync = new ThreadSyncService(app.database, app.events, app.threadStatusCache);
   const codexEvents = new CodexEventService(app.database);
   const workspaceFiles = new WorkspaceFileService(app.database);
 

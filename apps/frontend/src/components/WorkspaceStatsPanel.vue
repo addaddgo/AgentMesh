@@ -1,25 +1,27 @@
 <template>
   <section class="workspace-stats-panel">
     <header class="stats-header">
-      <span class="stats-title">Workspace Usage</span>
-      <el-button
-        size="small"
-        :icon="Refresh"
-        :loading="loading"
-        circle
-        title="Refresh stats"
-        @click="load"
-      />
-      <el-button
-        size="small"
-        type="danger"
-        plain
-        :icon="CloseBold"
-        circle
-        title="Close"
-        aria-label="Close"
-        @click="$emit('close')"
-      />
+      <h2>Workspace Usage</h2>
+      <div class="stats-header-actions">
+        <el-button
+          size="small"
+          :icon="Refresh"
+          :loading="loading"
+          circle
+          title="Refresh stats"
+          @click="load"
+        />
+        <el-button
+          size="small"
+          type="danger"
+          plain
+          :icon="CloseBold"
+          circle
+          title="Close"
+          aria-label="Close"
+          @click="$emit('close')"
+        />
+      </div>
     </header>
 
     <div v-if="loading" class="stats-loading">Loading...</div>
@@ -34,7 +36,7 @@
           class="bar-row"
         >
           <div class="bar-label" :title="bar.workspace">
-            {{ bar.shortName }}
+            {{ bar.workspace }}
           </div>
           <div class="bar-track">
             <div
@@ -92,11 +94,9 @@ const totalDurationMs = computed(() =>
 const totalTurns = computed(() =>
   data.value.reduce((sum, d) => sum + d.turnCount, 0)
 );
-
 const bars = computed(() =>
   data.value.map((d) => ({
     ...d,
-    shortName: shortenWorkspace(d.workspace),
     percent: (d.totalDurationMs / maxDuration.value) * 100
   }))
 );
@@ -114,12 +114,6 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false;
   }
-}
-
-function shortenWorkspace(workspace: string): string {
-  const parts = workspace.replace(/\/+$/u, "").split("/");
-  const base = parts.at(-1) ?? workspace;
-  return base.length > 24 ? base.slice(0, 21) + "..." : base;
 }
 
 function formatDuration(ms: number): string {
@@ -146,21 +140,47 @@ function formatDuration(ms: number): string {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 12px;
-  overflow: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 1.15rem;
+  background: #f5f5f0;
+  box-shadow:
+    0 18px 46px var(--warm-shadow),
+    0 1px 0 rgba(255, 255, 255, 0.85) inset;
+  overflow: hidden;
 }
 
 .stats-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin: -0.75rem -0.75rem 0;
+  padding: 0.62rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  border-radius: 1.15rem 1.15rem 0 0;
+  background: #d4edda;
 }
 
-.stats-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+.stats-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.stats-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.stats-chart {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0.5rem 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .stats-loading,
@@ -177,29 +197,32 @@ function formatDuration(ms: number): string {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0.5rem;
 }
 
 .bar-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #c0c0c0;
+  border-radius: 0.75rem;
+  background: rgba(255, 253, 244, 0.72);
 }
 
 .bar-label {
-  width: 100px;
-  flex-shrink: 0;
-  font-size: 12px;
+  min-width: 80px;
+  flex: 1;
+  font-size: 0.85rem;
   color: var(--el-text-color-secondary);
   text-align: right;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .bar-track {
   flex: 1;
-  height: 20px;
+  height: 16px;
   background: var(--el-fill-color-light);
   border-radius: 4px;
   overflow: hidden;
@@ -213,9 +236,9 @@ function formatDuration(ms: number): string {
 }
 
 .bar-value {
-  width: 80px;
+  width: 70px;
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 0.8rem;
   color: var(--el-text-color-regular);
   font-variant-numeric: tabular-nums;
 }
@@ -223,10 +246,9 @@ function formatDuration(ms: number): string {
 .stats-footer {
   display: flex;
   justify-content: space-between;
-  margin-top: 16px;
-  padding-top: 8px;
+  padding: 0.5rem 0.5rem 0;
   border-top: 1px solid var(--el-border-color-light);
-  font-size: 12px;
+  font-size: 0.85rem;
   color: var(--el-text-color-secondary);
 }
 </style>

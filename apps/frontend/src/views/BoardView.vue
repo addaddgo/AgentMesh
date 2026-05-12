@@ -4,14 +4,6 @@
       <div class="top-board-control">
         <el-button
           size="small"
-          :icon="DataAnalysis"
-          circle
-          title="Workspace Stats"
-          aria-label="Workspace Stats"
-          @click="addStatsPane"
-        />
-        <el-button
-          size="small"
           type="primary"
           :icon="Plus"
           circle
@@ -32,44 +24,42 @@
     </Teleport>
 
     <main class="thread-canvas">
-      <div v-if="threadLeaves.length > 0 || todoPanelVisible" class="thread-card-flow">
-        <TodoPanel v-if="todoPanelVisible" class="thread-card" @close="todoPanelVisible = false" />
-        <article
-          v-for="leaf in allLeaves"
-          :key="leaf.id"
-          class="thread-card"
-          :class="{ focused: focusedThreadLeafId === leaf.id }"
-          @mousedown="focusThreadPane(leaf.id)"
-        >
-          <WorkspaceStatsPanel
-            v-if="leaf.kind === 'stats'"
-            :focused="focusedThreadLeafId === leaf.id"
-            @close="closeThreadPane(leaf.id)"
-          />
-          <ThreadPanel
-            v-else
-            :app-server="appServerForLeaf(leaf)"
-            :thread="threadForLeaf(leaf)"
-            :messages="messagesForLeaf(leaf)"
-            :queue-items="queueItemsForLeaf(leaf)"
-            :draft="draftForLeaf(leaf)"
-            :focused="focusedThreadLeafId === leaf.id"
-            :resuming="isResumingLeaf(leaf)"
-            @draft="setDraftForLeaf(leaf, $event)"
-            @save-draft="saveDraftForLeaf(leaf)"
-            @send="sendDraftForLeaf(leaf, $event)"
-            @dropped="dropIntoLeaf(leaf, $event)"
-            @resume="resumeThreadForLeaf(leaf)"
-            @switch-thread="switchLeafThread(leaf, $event)"
-            @settings-updated="refreshThreadForLeaf(leaf)"
-            @thread-updated="threads.upsertThread($event)"
-            @close="closeThreadPane(leaf.id)"
-          />
-        </article>
-        
+      <div v-if="threadLeaves.length > 0 || todoPanelVisible || statsPanelVisible" class="thread-card-flow">
+        <template v-if="todoPanelVisible || statsPanelVisible">
+          <TodoPanel v-if="todoPanelVisible" key="todo" class="thread-card" @close="todoPanelVisible = false" />
+          <WorkspaceStatsPanel v-if="statsPanelVisible" key="stats" class="thread-card" @close="statsPanelVisible = false" />
+        </template>
+        <template v-for="group in workspaceGroups" :key="group.appServerId">
+          <article
+            v-for="leaf in group.leaves"
+            :key="leaf.id"
+            class="thread-card"
+            :class="{ focused: focusedThreadLeafId === leaf.id }"
+            @mousedown="focusThreadPane(leaf.id)"
+          >
+            <ThreadPanel
+              :app-server="appServerForLeaf(leaf)"
+              :thread="threadForLeaf(leaf)"
+              :messages="messagesForLeaf(leaf)"
+              :queue-items="queueItemsForLeaf(leaf)"
+              :draft="draftForLeaf(leaf)"
+              :focused="focusedThreadLeafId === leaf.id"
+              :resuming="isResumingLeaf(leaf)"
+              @draft="setDraftForLeaf(leaf, $event)"
+              @save-draft="saveDraftForLeaf(leaf)"
+              @send="sendDraftForLeaf(leaf, $event)"
+              @dropped="dropIntoLeaf(leaf, $event)"
+              @resume="resumeThreadForLeaf(leaf)"
+              @switch-thread="switchLeafThread(leaf, $event)"
+              @settings-updated="refreshThreadForLeaf(leaf)"
+              @thread-updated="threads.upsertThread($event)"
+              @close="closeThreadPane(leaf.id)"
+            />
+          </article>
+        </template>
       </div>
 
-      <el-empty v-else description="Click + to add a thread or the chart icon for workspace stats." />
+      <el-empty v-else description="Click + to add a thread." />
     </main>
 
     <el-dialog v-model="addDialogOpen" title="" width="860px">
@@ -183,11 +173,15 @@
       </div>
       </el-tab-pane>
       <el-tab-pane label="Tools">
-        <div class="tools-panel">
-          <label class="tool-option">
-            <el-checkbox v-model="todoPanelVisible" />
-            <span>Todo</span>
-          </label>
+        <div class="tools-grid">
+          <div class="tool-card">
+            <span class="tool-card-name">Todo</span>
+            <el-button size="small" type="primary" :icon="Plus" circle title="Add" aria-label="Add Todo" @click.stop="addTool('todo')" />
+          </div>
+          <div class="tool-card">
+            <span class="tool-card-name">Workspace Stats</span>
+            <el-button size="small" type="primary" :icon="Plus" circle title="Add" aria-label="Add Workspace Stats" @click="addTool('stats')" />
+          </div>
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -219,7 +213,6 @@
 import {
   CirclePlus,
   Close,
-  DataAnalysis,
   Plus,
   Refresh,
   RefreshRight,
@@ -239,6 +232,7 @@ import { computed, onMounted, ref, watch } from "vue";
 
 import ThreadPanel from "../components/ThreadPanel.vue";
 import TodoPanel from "../components/TodoPanel.vue";
+import WorkspaceStatsPanel from "../components/WorkspaceStatsPanel.vue";
 import { apiClient } from "../api/client";
 import { useAppServerStore } from "../stores/appServers";
 import { useMessageStore } from "../stores/messages";
@@ -273,6 +267,19 @@ const todoPanelVisible = ref(localStorage.getItem("todoPanelVisible") === "true"
 watch(todoPanelVisible, (visible) => {
   localStorage.setItem("todoPanelVisible", String(visible));
 });
+const statsPanelVisible = ref(localStorage.getItem("statsPanelVisible") === "true");
+watch(statsPanelVisible, (visible) => {
+  localStorage.setItem("statsPanelVisible", String(visible));
+});
+
+function addTool(tool: "todo" | "stats"): void {
+  if (tool === "todo") {
+    todoPanelVisible.value = true;
+  } else {
+    statsPanelVisible.value = true;
+  }
+  addDialogOpen.value = false;
+}
 
 const selectedAppServer = computed(() =>
   selectedAppServerId.value === null ? null : serverById(selectedAppServerId.value)
@@ -405,25 +412,6 @@ async function closeThreadPane(leafId: string): Promise<void> {
   focusedThreadLeafId.value = firstLeafId(boardTree.value);
   await persistBoardTree();
   focusThreadPane(focusedThreadLeafId.value);
-}
-
-async function addStatsPane(): Promise<void> {
-  const existingStats = findLeafByKind(boardTree.value, "stats");
-  if (existingStats !== null) {
-    focusThreadPane(existingStats.id);
-    return;
-  }
-
-  const statsLeaf: SplitPaneLeaf = {
-    type: "leaf",
-    kind: "stats",
-    id: crypto.randomUUID()
-  };
-  const nextLeaves = [...allLeaves.value, statsLeaf];
-  boardTree.value = buildLinearThreadTree(nextLeaves);
-  focusedThreadLeafId.value = statsLeaf.id;
-  await persistBoardTree();
-  focusThreadPane(statsLeaf.id);
 }
 
 function focusThreadPane(leafId: string | null): void {
@@ -647,6 +635,31 @@ function appServerLabel(server: AppServerDto): string {
   return `${server.host} / ${server.name}`;
 }
 
+type WorkspaceGroup = {
+  readonly appServerId: string;
+  readonly leaves: readonly SplitPaneLeaf[];
+};
+
+const workspaceGroups = computed<WorkspaceGroup[]>(() => {
+  const groups = new Map<string, SplitPaneLeaf[]>();
+  for (const leaf of allLeaves.value) {
+    const thread = threadForLeaf(leaf);
+    const appServerId = thread?.appServerId ?? "__unknown__";
+    const existing = groups.get(appServerId);
+    if (existing === undefined) {
+      groups.set(appServerId, [leaf]);
+    } else {
+      existing.push(leaf);
+    }
+  }
+  return [...groups.entries()].map(([appServerId, leaves]) => {
+    return {
+      appServerId,
+      leaves
+    };
+  });
+});
+
 function statusTagType(status: AppServerStatus): "success" | "warning" | "danger" | "info" {
   if (status === "online") {
     return "success";
@@ -670,16 +683,6 @@ function findLeaf(tree: SplitPaneTree | null, id: string | null): SplitPaneLeaf 
   }
 
   return findLeaf(tree.first, id) ?? findLeaf(tree.second, id);
-}
-
-function findLeafByKind(
-  tree: SplitPaneTree | null,
-  kind: "thread" | "stats"
-): SplitPaneLeaf | null {
-  if (tree === null) return null;
-  if (tree.type === "leaf" && tree.kind === kind) return tree;
-  if (tree.type === "split") return findLeafByKind(tree.first, kind) ?? findLeafByKind(tree.second, kind);
-  return null;
 }
 
 function findLeafByPayload(
@@ -750,3 +753,5 @@ function buildLinearThreadTree(leaves: readonly SplitPaneLeaf[]): SplitPaneTree 
   }, null);
 }
 </script>
+
+

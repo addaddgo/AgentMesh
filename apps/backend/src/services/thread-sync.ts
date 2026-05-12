@@ -6,6 +6,7 @@ import type { DatabaseHandle } from "../db/index.js";
 import { NotFoundError, ProtocolError } from "../errors.js";
 import type { JsonValue } from "./codex-json-rpc.js";
 import type { EventService } from "./events.js";
+import { ThreadStatusCache } from "./thread-status-cache.js";
 import { buildThreadRuntime } from "./thread-runtime.js";
 
 type CodexRequester = {
@@ -66,7 +67,8 @@ const MAX_THREAD_LIST_PAGES = 100;
 export class ThreadSyncService {
   public constructor(
     private readonly database: DatabaseHandle,
-    private readonly events: EventService
+    private readonly events: EventService,
+    private readonly statusCache: ThreadStatusCache
   ) {}
 
   public listCurrent(appServerId: string): ThreadDto[] {
@@ -111,7 +113,8 @@ export class ThreadSyncService {
   ): Promise<ThreadDto | null> {
     const existing = this.findByCodexThreadId(appServerId, codexThreadId);
     if (existing !== null) {
-      return existing;
+      this.statusCache.set(existing.id, "idle");
+      return this.findByCodexThreadId(appServerId, codexThreadId);
     }
 
     try {
@@ -124,7 +127,11 @@ export class ThreadSyncService {
       }
 
       this.upsertThreads(appServerId, [normalizeCodexThread(result.thread)]);
-      return this.findByCodexThreadId(appServerId, codexThreadId);
+      const materialized = this.findByCodexThreadId(appServerId, codexThreadId);
+      if (materialized !== null) {
+        this.statusCache.set(materialized.id, "idle");
+      }
+      return materialized;
     } catch {
       return null;
     }
@@ -172,6 +179,7 @@ export class ThreadSyncService {
       throw new ProtocolError("Codex thread/start did not create a local thread record");
     }
 
+    this.statusCache.set(thread.id, "idle");
     const dto = this.toDto(thread, this.getAppServerStatus(appServerId));
     this.events.publish({
       type: "thread.list_changed",
@@ -204,6 +212,7 @@ export class ThreadSyncService {
       throw new ProtocolError("Codex thread/resume did not update the local thread record");
     }
 
+    this.statusCache.set(resumed.id, "idle");
     const dto = this.toDto(resumed, this.getAppServerStatus(appServerId));
     this.events.publish({
       type: "thread.list_changed",
@@ -262,6 +271,7 @@ export class ThreadSyncService {
             : (this.findByCodexThreadIdRow(appServerId, thread.parentCodexThreadId)?.id ?? null);
 
         if (existing === undefined) {
+          const newId = randomUUID();
           this.database.sqlite
             .prepare(
               `
@@ -288,7 +298,7 @@ export class ThreadSyncService {
               `
             )
             .run(
-              randomUUID(),
+              newId,
               appServerId,
               thread.codexThreadId,
               thread.threadName,
@@ -459,7 +469,7 @@ export class ThreadSyncService {
   }
 
   private toDto(row: ThreadRow, appServerStatus: string): ThreadDto {
-    return toDto(row, appServerStatus, buildThreadRuntime(this.database.sqlite, row));
+    return toDto(row, appServerStatus, buildThreadRuntime(this.database.sqlite, row), this.statusCache);
   }
 }
 
@@ -640,7 +650,8 @@ function withThreadName(value: JsonValue, name: string): JsonValue {
   };
 }
 
-function toDto(row: ThreadRow, appServerStatus: string, runtime: ThreadRuntimeDto): ThreadDto {
+function toDto(row: ThreadRow, appServerStatus: string, runtime: ThreadRuntimeDto, statusCache?: ThreadStatusCache): ThreadDto {
+  const cachedStatus = statusCache?.get(row.id);
   return {
     id: row.id,
     appServerId: row.app_server_id,
@@ -651,7 +662,7 @@ function toDto(row: ThreadRow, appServerStatus: string, runtime: ThreadRuntimeDt
     parentCodexThreadId: row.parent_codex_thread_id,
     agentName: row.agent_name,
     title: row.title,
-    status: appServerStatus === "online" ? (row.status ?? "idle") : "notLoaded",
+    status: cachedStatus ?? "notLoaded",
     cwd: row.cwd,
     isCurrent: row.is_current === 1,
     isGone: row.is_gone === 1,

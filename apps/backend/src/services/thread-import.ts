@@ -12,6 +12,7 @@ import type { DatabaseHandle } from "../db/index.js";
 import { NotFoundError, ProtocolError, RequestValidationError } from "../errors.js";
 import type { JsonValue } from "./codex-json-rpc.js";
 import type { EventService } from "./events.js";
+import type { ThreadStatusCache } from "./thread-status-cache.js";
 import { buildThreadRuntime } from "./thread-runtime.js";
 
 type CodexRequester = {
@@ -70,7 +71,8 @@ type ImportedMessage = {
 export class ThreadImportService {
   public constructor(
     private readonly database: DatabaseHandle,
-    private readonly events: EventService
+    private readonly events: EventService,
+    private readonly statusCache: ThreadStatusCache
   ) {}
 
   public getThread(threadId: string): ThreadDto {
@@ -301,7 +303,7 @@ export class ThreadImportService {
   }
 
   private toThreadDto(row: ThreadRow, appServerStatus: string): ThreadDto {
-    return toThreadDto(row, appServerStatus, buildThreadRuntime(this.database.sqlite, row));
+    return toThreadDto(row, appServerStatus, buildThreadRuntime(this.database.sqlite, row), this.statusCache);
   }
 }
 
@@ -500,8 +502,10 @@ function normalizePart(value: JsonValue): MessagePart[] {
 function toThreadDto(
   row: ThreadRow,
   appServerStatus: string,
-  runtime: ThreadRuntimeDto
+  runtime: ThreadRuntimeDto,
+  statusCache?: ThreadStatusCache
 ): ThreadDto {
+  const cachedStatus = statusCache?.get(row.id);
   return {
     id: row.id,
     appServerId: row.app_server_id,
@@ -512,7 +516,7 @@ function toThreadDto(
     parentCodexThreadId: row.parent_codex_thread_id,
     agentName: row.agent_name,
     title: row.title,
-    status: appServerStatus === "online" ? (row.status ?? "idle") : "notLoaded",
+    status: cachedStatus ?? "notLoaded",
     cwd: row.cwd,
     isCurrent: row.is_current === 1,
     isGone: row.is_gone === 1,

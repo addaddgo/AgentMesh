@@ -16,6 +16,7 @@ import { NotFoundError, OfflineError, RequestValidationError } from "../errors.j
 import type { AppServerLifecycleRegistry } from "./app-server-lifecycle.js";
 import type { JsonValue } from "./codex-json-rpc.js";
 import type { EventService } from "./events.js";
+import type { ThreadStatusCache } from "./thread-status-cache.js";
 import {
   ImageUploadService,
   MAX_IMAGES_PER_MESSAGE,
@@ -98,7 +99,8 @@ export class MessageSendService {
     private readonly database: DatabaseHandle,
     private readonly config: BackendConfig,
     private readonly events: EventService,
-    private readonly appServerLifecycle: AppServerLifecycleRegistry
+    private readonly appServerLifecycle: AppServerLifecycleRegistry,
+    private readonly statusCache: ThreadStatusCache
   ) {
     this.messages = new MessageStorageService(database);
     this.codexEvents = new CodexEventService(database);

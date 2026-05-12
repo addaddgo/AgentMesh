@@ -38,7 +38,7 @@ const renameThreadSchema = z
   .strict();
 
 export async function registerThreadRoutes(app: FastifyInstance): Promise<void> {
-  const service = new ThreadImportService(app.database, app.events);
+  const service = new ThreadImportService(app.database, app.events, app.threadStatusCache);
   const codexEvents = new CodexEventService(app.database);
   const queue = new ThreadQueueService(app.database, app.events);
 

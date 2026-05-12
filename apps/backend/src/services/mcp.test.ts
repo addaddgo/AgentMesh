@@ -28,7 +28,8 @@ describe("MCP tools", () => {
       app.database,
       config,
       app.events,
-      app.appServerLifecycle
+      app.appServerLifecycle,
+      app.threadStatusCache
     );
 
     const { appServerId } = await createStartedAppServer(
@@ -67,7 +68,8 @@ describe("MCP tools", () => {
       app.database,
       config,
       app.events,
-      app.appServerLifecycle
+      app.appServerLifecycle,
+      app.threadStatusCache
     );
 
     const { appServerId, threadId } = await createStartedAppServer(
@@ -129,7 +131,8 @@ describe("MCP tools", () => {
       app.database,
       config,
       app.events,
-      app.appServerLifecycle
+      app.appServerLifecycle,
+      app.threadStatusCache
     );
 
     expect(

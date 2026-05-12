@@ -6,16 +6,21 @@ import type { DatabaseHandle } from "../db/index.js";
 import { OfflineError, ProtocolError, RequestValidationError, SshError } from "../errors.js";
 import { AppServerService } from "./app-servers.js";
 import { ApprovalService } from "./approvals.js";
-import { CodexJsonRpcTransport, type CodexProcessExit, type JsonValue } from "./codex-json-rpc.js";
+import { CodexJsonRpcTransport, type CodexProcessExit, type JsonValue, CodexJsonRpcTimeoutError, CodexJsonRpcClosedError } from "./codex-json-rpc.js";
 import type { EventService } from "./events.js";
 import { ThreadSyncService } from "./thread-sync.js";
+import { ThreadStatusCache } from "./thread-status-cache.js";
 
 type RegistryEntry = {
   readonly appServerId: string;
   readonly transport: CodexJsonRpcTransport;
   expectedStop: boolean;
   exitHandled: boolean;
+  healthCheckTimer?: ReturnType<typeof setInterval>;
 };
+
+const HEALTH_CHECK_INTERVAL_MS = 1_000;
+const HEALTH_CHECK_TIMEOUT_MS = 5_000;
 
 export class AppServerLifecycleRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
@@ -25,10 +30,11 @@ export class AppServerLifecycleRegistry {
 
   public constructor(
     private readonly database: DatabaseHandle,
-    private readonly events: EventService
+    private readonly events: EventService,
+    private readonly statusCache: ThreadStatusCache
   ) {
     this.appServers = new AppServerService(database);
-    this.threadSync = new ThreadSyncService(database, events);
+    this.threadSync = new ThreadSyncService(database, events, statusCache);
     this.approvals = new ApprovalService(database, events);
   }
 
@@ -118,6 +124,7 @@ export class AppServerLifecycleRegistry {
       lastError: null
     });
     this.publishStatus(online);
+    this.startHealthCheck(entry);
     const syncResult = await this.threadSync.sync(id, transport);
     if (syncResult.threads.length === 0) {
       await this.threadSync.createThread(id, transport, "main");
@@ -141,6 +148,7 @@ export class AppServerLifecycleRegistry {
 
     entry.expectedStop = true;
     this.publishStatus(this.appServers.setStatus(id, "stopping"));
+    this.stopHealthCheck(entry);
     entry.transport.kill("SIGTERM");
     await entry.transport.close();
     this.entries.delete(id);
@@ -172,6 +180,7 @@ export class AppServerLifecycleRegistry {
     await Promise.all(
       entries.map(async (entry) => {
         entry.expectedStop = true;
+        this.stopHealthCheck(entry);
         entry.transport.kill("SIGTERM");
         await entry.transport.close();
       })
@@ -184,12 +193,22 @@ export class AppServerLifecycleRegistry {
     }
 
     entry.exitHandled = true;
+    this.stopHealthCheck(entry);
     this.entries.delete(entry.appServerId);
     this.recordProcessExit(entry.appServerId, exit);
     this.approvals.markPendingForAppServerFailed(
       entry.appServerId,
       `Codex app-server exited${formatExit(exit)}`
     );
+
+    // Mark in-flight messages and queue items as failed
+    const now = Date.now();
+    this.database.sqlite.prepare(
+      "UPDATE messages SET status = 'failed', updated_at = ? WHERE app_server_id = ? AND status IN ('pending', 'queued', 'sent', 'streaming')"
+    ).run(now, entry.appServerId);
+    this.database.sqlite.prepare(
+      "UPDATE queue_items SET status = 'failed', updated_at = ? WHERE app_server_id = ? AND status IN ('pending', 'running', 'waiting_approval')"
+    ).run(now, entry.appServerId);
 
     const current = this.appServers.get(entry.appServerId);
 
@@ -273,6 +292,30 @@ export class AppServerLifecycleRegistry {
       payload: { appServer }
     });
   }
+  private startHealthCheck(entry: RegistryEntry): void {
+    entry.healthCheckTimer = setInterval(async () => {
+      try {
+        await entry.transport.request("model/list", undefined, HEALTH_CHECK_TIMEOUT_MS);
+      } catch (error) {
+        // Only treat transport-level failures (timeout / closed) as process death.
+        // Codex RPC errors (method not found, etc.) mean the process is still alive.
+        if (
+          error instanceof CodexJsonRpcTimeoutError ||
+          error instanceof CodexJsonRpcClosedError
+        ) {
+          this.handleProcessExit(entry, { code: null, signal: "SIGKILL" });
+        }
+      }
+    }, HEALTH_CHECK_INTERVAL_MS);
+  }
+
+  private stopHealthCheck(entry: RegistryEntry): void {
+    if (entry.healthCheckTimer !== undefined) {
+      clearInterval(entry.healthCheckTimer);
+      entry.healthCheckTimer = undefined;
+    }
+  }
+
 }
 
 function errorMessage(error: unknown): string {

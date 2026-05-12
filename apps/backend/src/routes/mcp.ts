@@ -55,7 +55,8 @@ async function getOrCreateSession(
     app.database,
     app.config,
     app.events,
-    app.appServerLifecycle
+    app.appServerLifecycle,
+    app.threadStatusCache
   );
   const server = createAgentMeshMcpServer(service);
   const transport = new StreamableHTTPServerTransport({

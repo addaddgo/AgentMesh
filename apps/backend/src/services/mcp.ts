@@ -6,6 +6,7 @@ import type { BackendConfig } from "../config.js";
 import type { DatabaseHandle } from "../db/index.js";
 import type { AppServerLifecycleRegistry } from "./app-server-lifecycle.js";
 import type { EventService } from "./events.js";
+import type { ThreadStatusCache } from "./thread-status-cache.js";
 import { MessageSendService } from "./message-send.js";
 
 export type McpAppServer = {
@@ -61,9 +62,10 @@ export class AgentMeshMcpService {
     private readonly database: DatabaseHandle,
     config: BackendConfig,
     events: EventService,
-    appServerLifecycle: AppServerLifecycleRegistry
+    appServerLifecycle: AppServerLifecycleRegistry,
+    private readonly statusCache: ThreadStatusCache
   ) {
-    this.sends = new MessageSendService(database, config, events, appServerLifecycle);
+    this.sends = new MessageSendService(database, config, events, appServerLifecycle, statusCache);
   }
 
   public listAppServers(): McpAppServer[] {
@@ -81,7 +83,7 @@ export class AgentMeshMcpService {
       app_server_name: row.name,
       host: row.host,
       workspace: row.workspace,
-      status: row.status
+      status: row.status ?? "idle"
     }));
   }
 
@@ -99,7 +101,7 @@ export class AgentMeshMcpService {
       threads: rows.map((row) => ({
         thread_name: row.thread_name,
         thread_id: row.codex_thread_id,
-        status: row.status,
+        status: this.statusCache.get(row.id) ?? "idle",
         updated_time: new Date(row.updated_at).toISOString()
       }))
     };

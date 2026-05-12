@@ -17,7 +17,8 @@ export async function registerMessageRoutes(app: FastifyInstance): Promise<void>
     app.database,
     app.config,
     app.events,
-    app.appServerLifecycle
+    app.appServerLifecycle,
+    app.threadStatusCache
   );
 
   app.post(

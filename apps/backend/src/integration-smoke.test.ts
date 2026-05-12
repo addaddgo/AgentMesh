@@ -152,7 +152,7 @@ describe("backend integration with fake Codex app-server", () => {
       "completed"
     );
 
-    const mcp = new AgentMeshMcpService(app.database, config, app.events, app.appServerLifecycle);
+    const mcp = new AgentMeshMcpService(app.database, config, app.events, app.appServerLifecycle, app.threadStatusCache);
     const appServerName = started.json<{ name: string }>().name;
     expect(mcp.listAppServers()).toEqual([
       expect.objectContaining({ app_server_name: appServerName, workspace, status: "online" })

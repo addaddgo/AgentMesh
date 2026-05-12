@@ -22,6 +22,7 @@ import { registerTodoRoutes } from "./routes/todos.js";
 import { AppServerLifecycleRegistry } from "./services/app-server-lifecycle.js";
 import { AppServerService } from "./services/app-servers.js";
 import { EventService } from "./services/events.js";
+import { ThreadStatusCache } from "./services/thread-status-cache.js";
 
 export type ServerOptions = {
   readonly config: BackendConfig;
@@ -39,11 +40,25 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
   initializeDatabase(database);
   new AppServerService(database).markAllOfflineAfterBackendRestart();
 
+  // After restart, mark all in-flight messages, queue items, and approvals as failed
+  const now = Date.now();
+  database.sqlite.prepare(
+    "UPDATE messages SET status = 'failed', updated_at = ? WHERE status IN ('pending', 'queued', 'sent', 'streaming')"
+  ).run(now);
+  database.sqlite.prepare(
+    "UPDATE queue_items SET status = 'failed', updated_at = ? WHERE status IN ('pending', 'running', 'waiting_approval')"
+  ).run(now);
+  database.sqlite.prepare(
+    "UPDATE approvals SET status = 'failed', updated_at = ? WHERE status = 'pending'"
+  ).run(now);
+
   const events = new EventService();
-  const appServerLifecycle = new AppServerLifecycleRegistry(database, events);
+  const threadStatusCache = new ThreadStatusCache();
+  const appServerLifecycle = new AppServerLifecycleRegistry(database, events, threadStatusCache);
   app.decorate("config", options.config);
   app.decorate("database", database);
   app.decorate("events", events);
+  app.decorate("threadStatusCache", threadStatusCache);
   app.decorate("appServerLifecycle", appServerLifecycle);
 
   await app.register(fastifyMultipart);
@@ -94,6 +109,7 @@ declare module "fastify" {
     config: BackendConfig;
     database: DatabaseHandle;
     events: EventService;
+    threadStatusCache: ThreadStatusCache;
     appServerLifecycle: AppServerLifecycleRegistry;
   }
 }

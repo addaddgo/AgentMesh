@@ -25,20 +25,21 @@ describe("WorkspaceOpenService", () => {
       .run("local-1", "local", "local", "localhost", "/workspace/demo", Date.now(), Date.now());
 
     const runCodeCommand = vi.fn();
-    const service = new WorkspaceOpenService(database, runCodeCommand);
+    const focusUri = vi.fn();
+    const service = new WorkspaceOpenService(database, runCodeCommand, focusUri);
     const result = service.openInVscode("local-1", "src/app.ts");
 
     expect(result).toEqual({ opened: true });
     expect(runCodeCommand).toHaveBeenCalledWith([
-      "--folder-uri",
-      "file:///workspace/demo",
-      "--file-uri",
-      "file:///workspace/demo/src/app.ts"
+      "/workspace/demo",
+      "--goto",
+      "/workspace/demo/src/app.ts"
     ]);
+    expect(focusUri).toHaveBeenCalledWith("vscode://file/workspace/demo/src/app.ts");
     database.close();
   });
 
-  it("opens ssh workspaces with vscode remote URIs", () => {
+  it("opens ssh workspaces with documented remote CLI arguments", () => {
     const database = createDatabase({
       dataDir: "/tmp",
       sqlitePath: ":memory:",
@@ -59,15 +60,19 @@ describe("WorkspaceOpenService", () => {
       .run("ssh-1", "remote", "ssh", "ultra", "hxb", 22, "/home/hxb/project", Date.now(), Date.now());
 
     const runCodeCommand = vi.fn();
-    const service = new WorkspaceOpenService(database, runCodeCommand);
+    const focusUri = vi.fn();
+    const service = new WorkspaceOpenService(database, runCodeCommand, focusUri);
     service.openInVscode("ssh-1", "src/main.ts");
 
     expect(runCodeCommand).toHaveBeenCalledWith([
-      "--folder-uri",
-      "vscode-remote://ssh-remote+ultra/home/hxb/project",
-      "--file-uri",
-      "vscode-remote://ssh-remote+ultra/home/hxb/project/src/main.ts"
+      "--remote",
+      "ssh-remote+ultra",
+      "/home/hxb/project",
+      "/home/hxb/project/src/main.ts"
     ]);
+    expect(focusUri).toHaveBeenCalledWith(
+      "vscode://vscode-remote/ssh-remote+ultra/home/hxb/project/src/main.ts"
+    );
     database.close();
   });
 

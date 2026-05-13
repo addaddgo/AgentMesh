@@ -6,6 +6,10 @@ import type { AppServerDto, AppServerHostKind, AppServerStatus } from "@agentmes
 import type { DatabaseHandle } from "../db/index.js";
 import { NotFoundError, RequestValidationError } from "../errors.js";
 import { normalizeWorkspacePath } from "./filesystem-safety.js";
+import {
+  buildResolvedObservationPrompt,
+  normalizeObservationSkillNames
+} from "./observation-stack.js";
 
 const DEFAULT_COMMAND = "codex app-server";
 const LOCAL_HOST = "localhost";
@@ -20,6 +24,8 @@ export type CreateAppServerInput = {
   readonly workspace: string;
   readonly command?: string | undefined;
   readonly environment?: Record<string, string> | undefined;
+  readonly observationPrompt?: string | undefined;
+  readonly activeObservationSkillNames?: readonly string[] | undefined;
 };
 
 export type PatchAppServerInput = Partial<CreateAppServerInput>;
@@ -34,6 +40,8 @@ type AppServerRow = {
   readonly workspace: string;
   readonly command: string;
   readonly environment_json: string;
+  readonly observation_prompt: string | null;
+  readonly active_observation_skills_json: string;
   readonly status: AppServerDto["status"];
   readonly last_started_at: number | null;
   readonly last_seen_at: number | null;
@@ -51,6 +59,8 @@ type NormalizedAppServerConfig = {
   readonly workspace: string;
   readonly command: string;
   readonly environment: Readonly<Record<string, string>>;
+  readonly observationPrompt: string | null;
+  readonly activeObservationSkillNames: readonly string[];
 };
 
 export class AppServerService {
@@ -89,11 +99,13 @@ export class AppServerService {
             workspace,
             command,
             environment_json,
+            observation_prompt,
+            active_observation_skills_json,
             status,
             last_error,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', NULL, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', NULL, ?, ?)
         `
       )
       .run(
@@ -106,6 +118,8 @@ export class AppServerService {
         config.workspace,
         config.command,
         JSON.stringify(config.environment),
+        config.observationPrompt,
+        JSON.stringify(config.activeObservationSkillNames),
         now,
         now
       );
@@ -132,7 +146,11 @@ export class AppServerService {
       workspace: input.workspace ?? existing.workspace,
       command: input.command ?? existing.command,
       environment:
-        input.environment ?? (JSON.parse(existing.environment_json) as Record<string, string>)
+        input.environment ?? (JSON.parse(existing.environment_json) as Record<string, string>),
+      observationPrompt: input.observationPrompt ?? existing.observation_prompt ?? undefined,
+      activeObservationSkillNames:
+        input.activeObservationSkillNames ??
+        (JSON.parse(existing.active_observation_skills_json) as string[])
     };
     const config = normalizeConfig(mergedInput);
 
@@ -153,6 +171,8 @@ export class AppServerService {
             workspace = ?,
             command = ?,
             environment_json = ?,
+            observation_prompt = ?,
+            active_observation_skills_json = ?,
             updated_at = ?
           WHERE id = ?
         `
@@ -166,6 +186,8 @@ export class AppServerService {
         config.workspace,
         config.command,
         JSON.stringify(config.environment),
+        config.observationPrompt,
+        JSON.stringify(config.activeObservationSkillNames),
         Date.now(),
         id
       );
@@ -331,7 +353,9 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
       sshPort: null,
       workspace,
       command,
-      environment
+      environment,
+      observationPrompt: normalizeNullableText(input.observationPrompt),
+      activeObservationSkillNames: normalizeObservationSkillNames(input.activeObservationSkillNames)
     };
   }
 
@@ -351,7 +375,9 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
     sshPort: input.sshPort ?? null,
     workspace,
     command,
-    environment
+    environment,
+    observationPrompt: normalizeNullableText(input.observationPrompt),
+    activeObservationSkillNames: normalizeObservationSkillNames(input.activeObservationSkillNames)
   };
 }
 
@@ -436,6 +462,9 @@ function parseEnvironmentJson(value: string): Readonly<Record<string, string>> {
 }
 
 function toDto(row: AppServerRow): AppServerDto {
+  const activeObservationSkillNames = normalizeObservationSkillNames(
+    JSON.parse(row.active_observation_skills_json) as string[]
+  );
   return {
     id: row.id,
     name: row.name,
@@ -446,6 +475,12 @@ function toDto(row: AppServerRow): AppServerDto {
     workspace: row.workspace,
     command: row.command,
     environment: parseEnvironmentJson(row.environment_json),
+    observationPrompt: row.observation_prompt,
+    activeObservationSkillNames,
+    resolvedObservationPrompt: buildResolvedObservationPrompt(
+      row.observation_prompt,
+      activeObservationSkillNames
+    ),
     status: row.status,
     lastStartedAt: row.last_started_at,
     lastSeenAt: row.last_seen_at,

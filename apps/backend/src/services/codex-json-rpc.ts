@@ -188,7 +188,7 @@ export class CodexJsonRpcTransport {
 
   public static local(options: CodexLocalTransportOptions): CodexJsonRpcTransport {
     return CodexJsonRpcTransport.fromChildProcess(
-      spawnShellCommand(options.command, {
+      spawnLocalCommand(options.command, {
         cwd: options.cwd,
         env: options.env
       }),
@@ -514,15 +514,77 @@ export class CodexJsonRpcTransport {
   }
 }
 
-function spawnShellCommand(
+function spawnLocalCommand(
   command: string,
   options: Pick<SpawnOptionsWithoutStdio, "cwd" | "env">
 ): ChildProcessWithoutNullStreams {
-  return spawn(command, {
+  const [file, ...args] = splitCommand(command);
+  return spawn(file, args, {
     ...options,
-    shell: true,
     stdio: "pipe"
   });
+}
+
+function splitCommand(command: string): [string, ...string[]] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let escaping = false;
+
+  for (const char of command.trim()) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+
+    if (quote !== null) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (/\s/u.test(char)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (escaping || quote !== null) {
+    throw new RequestValidationError("Local app-server launch command is invalid", [
+      { path: ["command"], message: "Command contains unterminated quoting or escaping" }
+    ]);
+  }
+
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+
+  if (tokens.length === 0) {
+    throw new RequestValidationError("Local app-server launch command is invalid", [
+      { path: ["command"], message: "Command is required" }
+    ]);
+  }
+
+  return tokens as [string, ...string[]];
 }
 
 export function buildCodexSshCommand(options: CodexSshTransportOptions): {

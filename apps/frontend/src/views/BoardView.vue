@@ -4,7 +4,7 @@
       <div class="top-board-control">
         <el-button
           size="small"
-          type="primary"
+          class="action-button-muted"
           :icon="Plus"
           circle
           title="Add thread"
@@ -803,5 +803,11 @@ function buildLinearThreadTree(leaves: readonly SplitPaneLeaf[]): SplitPaneTree 
 
 .tool-card-name {
   font-weight: 700;
+}
+
+:deep(.action-button-muted) {
+  border-color: color-mix(in srgb, var(--accent-primary) 24%, var(--line)) !important;
+  background: color-mix(in srgb, var(--accent-primary) 14%, var(--bg-panel-elevated)) !important;
+  color: var(--text-primary) !important;
 }
 </style>

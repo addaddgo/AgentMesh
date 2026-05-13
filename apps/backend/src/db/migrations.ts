@@ -343,6 +343,16 @@ export const MIGRATIONS: readonly Migration[] = [
         ADD COLUMN category TEXT;
     `
   },
+  {
+    id: "0007_observation_stack_settings",
+    sql: `
+      ALTER TABLE app_servers
+        ADD COLUMN observation_prompt TEXT;
+
+      ALTER TABLE app_servers
+        ADD COLUMN active_observation_skills_json TEXT NOT NULL DEFAULT '[]';
+    `
+  },
 
 ];
 

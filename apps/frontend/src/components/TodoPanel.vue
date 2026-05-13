@@ -196,7 +196,7 @@
         />
         <el-button
           size="small"
-          type="primary"
+          class="todo-add-button"
           :icon="Plus"
           circle
           native-type="submit"
@@ -281,12 +281,12 @@ const groupedItems = computed(() => {
 const todoThemeVars = computed<Record<string, string>>(() => {
   if (theme.theme === "dark") {
     return {
-      "--todo-panel-bg": "#1a211c",
+      "--todo-panel-bg": "#252c27",
       "--todo-header-bg": "#214130",
-      "--todo-item-bg": "rgba(26, 33, 28, 0.94)",
-      "--todo-sticky-bg": "#1a211c",
-      "--todo-input-bg": "rgba(30, 38, 32, 0.92)",
-      "--todo-input-border": "rgba(121, 138, 127, 0.22)",
+      "--todo-item-bg": "rgba(44, 53, 46, 0.92)",
+      "--todo-sticky-bg": "#252c27",
+      "--todo-input-bg": "rgba(49, 58, 51, 0.94)",
+      "--todo-input-border": "rgba(135, 148, 138, 0.24)",
       "--todo-hover-bg": "color-mix(in srgb, var(--accent-primary) 12%, transparent)",
       "--todo-group-hover-bg": "color-mix(in srgb, var(--accent-primary) 10%, transparent)",
       "--todo-shadow-inset": "color-mix(in srgb, var(--warm-white) 22%, transparent)"
@@ -719,6 +719,9 @@ async function onDrop(event: DragEvent): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 0.85rem;
+  border-color: color-mix(in srgb, var(--accent-primary) 28%, var(--line));
+  background: color-mix(in srgb, var(--accent-primary) 10%, var(--todo-item-bg, var(--bg-row-subtle)));
+  color: var(--text-secondary);
 }
 
 .todo-category-add {
@@ -762,6 +765,12 @@ async function onDrop(event: DragEvent): Promise<void> {
 
 .todo-group-arrow {
   font-size: 0.7rem;
+}
+
+.todo-add-button {
+  border-color: color-mix(in srgb, var(--accent-primary) 26%, var(--line)) !important;
+  background: color-mix(in srgb, var(--accent-primary) 14%, var(--todo-input-bg)) !important;
+  color: var(--text-primary) !important;
 }
 
 </style>

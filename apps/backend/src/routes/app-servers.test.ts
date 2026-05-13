@@ -172,6 +172,34 @@ describe("app-server configuration API", () => {
     });
   });
 
+  it("stores observation stack settings on the app server", async () => {
+    const { app, config } = await setup();
+    const skillDir = path.join(config.skillsRoot, "observe-logs");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      "---\nname: observe-logs\ndescription: inspect logs\n---\nbody"
+    );
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace: "/workspace/project",
+        observationPrompt: "Use the workspace observation stack first.",
+        activeObservationSkillNames: ["observe-logs"]
+      }
+    });
+
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({
+      observationPrompt: "Use the workspace observation stack first.",
+      activeObservationSkillNames: ["observe-logs"],
+      resolvedObservationPrompt: expect.stringContaining("$observe-logs")
+    });
+  });
+
   it("rejects unsafe workspace paths", async () => {
     const { app } = await setup();
 

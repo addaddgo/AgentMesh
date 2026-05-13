@@ -78,6 +78,8 @@ export type CreateAppServerPayload = {
   readonly workspace: string;
   readonly command?: string;
   readonly environment?: Record<string, string>;
+  readonly observationPrompt?: string;
+  readonly activeObservationSkillNames?: readonly string[];
 };
 
 export type PatchAppServerPayload = Partial<CreateAppServerPayload>;

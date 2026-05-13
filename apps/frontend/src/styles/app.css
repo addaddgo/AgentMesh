@@ -64,6 +64,34 @@ body.theme-light,
   --el-color-primary-light-8: #faeac6;
   --el-color-primary-light-9: #fff6df;
   --el-color-primary-dark-2: #9f6900;
+  --el-color-success: #5f8f73;
+  --el-color-success-light-3: #87aa95;
+  --el-color-success-light-5: #a7c1b2;
+  --el-color-success-light-7: #c6d7cc;
+  --el-color-success-light-8: #d6e2da;
+  --el-color-success-light-9: #e8efe9;
+  --el-color-success-dark-2: #4a735d;
+  --el-color-warning: #af7c3a;
+  --el-color-warning-light-3: #c29a66;
+  --el-color-warning-light-5: #d2b48e;
+  --el-color-warning-light-7: #e0ccb3;
+  --el-color-warning-light-8: #e9dac8;
+  --el-color-warning-light-9: #f3ebe0;
+  --el-color-warning-dark-2: #8f632e;
+  --el-color-danger: #a96a6a;
+  --el-color-danger-light-3: #bd8d8d;
+  --el-color-danger-light-5: #cfabab;
+  --el-color-danger-light-7: #e0c7c7;
+  --el-color-danger-light-8: #ead6d6;
+  --el-color-danger-light-9: #f4e8e8;
+  --el-color-danger-dark-2: #8a5555;
+  --el-color-info: #857863;
+  --el-color-info-light-3: #9e927e;
+  --el-color-info-light-5: #b5ab99;
+  --el-color-info-light-7: #c1baad;
+  --el-color-info-light-8: #d0c9bf;
+  --el-color-info-light-9: #e0dad2;
+  --el-color-info-dark-2: #6b5f4f;
   --el-bg-color: #fffefb;
   --el-bg-color-page: #fffaf0;
   --el-bg-color-overlay: #fffefc;
@@ -83,25 +111,25 @@ html.theme-dark,
 body.theme-dark,
 .theme-dark {
   color: #e7dec9;
-  background: #111612;
-  --bg-app: #111612;
+  background: #1a1f1c;
+  --bg-app: #1a1f1c;
   --bg-body-top: rgba(68, 98, 79, 0.18);
   --bg-body-accent: rgba(201, 134, 0, 0.08);
-  --bg-body-gradient-start: #171d19;
-  --bg-body-gradient-mid: #121714;
-  --bg-body-gradient-end: #0c100d;
+  --bg-body-gradient-start: #232925;
+  --bg-body-gradient-mid: #1c221e;
+  --bg-body-gradient-end: #171c18;
   --bg-nav: rgba(17, 22, 18, 0.86);
   --bg-topbar: rgba(16, 21, 17, 0.68);
-  --bg-panel: rgba(20, 26, 22, 0.9);
-  --bg-panel-soft: rgba(23, 29, 24, 0.92);
-  --bg-panel-elevated: rgba(26, 33, 28, 0.94);
-  --bg-card: rgba(28, 35, 30, 0.84);
+  --bg-panel: rgba(32, 39, 34, 0.92);
+  --bg-panel-soft: rgba(38, 46, 40, 0.94);
+  --bg-panel-elevated: rgba(46, 55, 48, 0.96);
+  --bg-card: rgba(44, 53, 46, 0.86);
   --bg-card-active: rgba(201, 134, 0, 0.18);
-  --bg-selection: rgba(26, 33, 28, 0.88);
-  --bg-selection-active: rgba(201, 134, 0, 0.16);
-  --bg-row-subtle: rgba(24, 31, 26, 0.92);
-  --bg-success-soft: rgba(27, 58, 43, 0.78);
-  --bg-danger-soft: rgba(76, 32, 32, 0.76);
+  --bg-selection: rgba(42, 50, 44, 0.9);
+  --bg-selection-active: rgba(201, 134, 0, 0.2);
+  --bg-row-subtle: rgba(43, 52, 45, 0.94);
+  --bg-success-soft: rgba(41, 74, 57, 0.82);
+  --bg-danger-soft: rgba(92, 45, 45, 0.78);
   --bg-tool-header: #214130;
   --text-primary: #e7dec9;
   --text-secondary: #b2a792;
@@ -140,11 +168,39 @@ body.theme-dark,
   --el-color-primary-light-8: #f6e8c8;
   --el-color-primary-light-9: #fbf4e3;
   --el-color-primary-dark-2: #be8d2a;
-  --el-bg-color: #18201a;
-  --el-bg-color-page: #111612;
-  --el-bg-color-overlay: #212924;
-  --el-fill-color-light: rgba(62, 73, 65, 0.72);
-  --el-fill-color-blank: #1d251f;
+  --el-color-success: #6f9d81;
+  --el-color-success-light-3: #8eb39a;
+  --el-color-success-light-5: #a9c6b2;
+  --el-color-success-light-7: #c6dace;
+  --el-color-success-light-8: #d9e6dd;
+  --el-color-success-light-9: #edf3ef;
+  --el-color-success-dark-2: #5a836a;
+  --el-color-warning: #b58a52;
+  --el-color-warning-light-3: #c6a173;
+  --el-color-warning-light-5: #d5b996;
+  --el-color-warning-light-7: #e3cfb7;
+  --el-color-warning-light-8: #ebdccb;
+  --el-color-warning-light-9: #f4eee3;
+  --el-color-warning-dark-2: #957144;
+  --el-color-danger: #b27b7b;
+  --el-color-danger-light-3: #c59a9a;
+  --el-color-danger-light-5: #d7b6b6;
+  --el-color-danger-light-7: #e6d1d1;
+  --el-color-danger-light-8: #eedede;
+  --el-color-danger-light-9: #f7eeee;
+  --el-color-danger-dark-2: #926565;
+  --el-color-info: #938772;
+  --el-color-info-light-3: #a99f8b;
+  --el-color-info-light-5: #beb6a5;
+  --el-color-info-light-7: #c7c0b4;
+  --el-color-info-light-8: #d5d0c7;
+  --el-color-info-light-9: #e4dfd8;
+  --el-color-info-dark-2: #786d5c;
+  --el-bg-color: #242b26;
+  --el-bg-color-page: #1a1f1c;
+  --el-bg-color-overlay: #313933;
+  --el-fill-color-light: rgba(78, 89, 81, 0.74);
+  --el-fill-color-blank: #262e28;
   --el-text-color-primary: var(--text-primary);
   --el-text-color-regular: var(--text-muted);
   --el-text-color-secondary: var(--text-secondary);
@@ -172,6 +228,46 @@ button,
 input,
 textarea {
   font: inherit;
+}
+
+.el-button {
+  border-radius: 0.78rem;
+  box-shadow: none;
+}
+
+.el-button:not(.is-text):not(.is-link) {
+  border-color: color-mix(in srgb, currentColor 18%, var(--line));
+}
+
+.el-button--primary:not(.is-plain),
+.el-button--success:not(.is-plain),
+.el-button--warning:not(.is-plain),
+.el-button--danger:not(.is-plain),
+.el-button--info:not(.is-plain) {
+  filter: saturate(0.84) brightness(0.96);
+}
+
+.el-button--primary.is-plain,
+.el-button--success.is-plain,
+.el-button--warning.is-plain,
+.el-button--danger.is-plain,
+.el-button--info.is-plain {
+  background: color-mix(in srgb, currentColor 8%, var(--bg-panel-elevated));
+}
+
+.el-tag {
+  border-radius: 999px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  filter: saturate(0.82) brightness(0.97);
+}
+
+.el-tag--success,
+.el-tag--warning,
+.el-tag--danger,
+.el-tag--info,
+.el-tag--primary {
+  border-width: 1px;
 }
 
 .visually-hidden {
@@ -480,7 +576,9 @@ textarea {
 }
 
 .app-server-page {
-  min-height: calc(100vh - 88px);
+  height: calc(100vh - 88px);
+  min-height: 0;
+  overflow: auto;
 }
 
 .skills-page {
@@ -948,7 +1046,7 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 0.72rem;
   background: var(--bg-panel-elevated);
-  color: var(--text-primary);
+  color: color-mix(in srgb, var(--text-primary) 90%, var(--text-secondary) 10%);
   overflow-wrap: anywhere;
   box-shadow: 0 10px 24px color-mix(in srgb, var(--shadow-panel) 65%, transparent);
 }
@@ -962,7 +1060,7 @@ textarea {
     color-mix(in srgb, var(--accent-success) 42%, var(--bg-panel-elevated) 58%),
     color-mix(in srgb, var(--accent-primary) 26%, var(--bg-panel-elevated) 74%)
   );
-  color: var(--text-primary);
+  color: color-mix(in srgb, var(--text-primary) 91%, var(--text-secondary) 9%);
 }
 
 .message-card.assistant {
@@ -984,7 +1082,7 @@ textarea {
   margin-right: auto;
   border-style: dashed;
   background: color-mix(in srgb, var(--bg-panel-soft) 86%, var(--bg-panel-elevated) 14%);
-  color: var(--text-secondary);
+  color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-muted) 12%);
 }
 
 .thread-panel.user-messages-hidden .message-card.event,
@@ -998,7 +1096,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.45rem;
-  color: var(--ink-soft);
+  color: color-mix(in srgb, var(--ink-soft) 88%, var(--text-muted) 12%);
   font-size: 0.72rem;
   text-transform: lowercase;
 }
@@ -1033,7 +1131,7 @@ textarea {
   justify-content: flex-start;
   gap: 0.55rem;
   margin-top: 0.55rem;
-  color: var(--ink-soft);
+  color: color-mix(in srgb, var(--ink-soft) 86%, var(--text-muted) 14%);
   font-size: 0.68rem;
   letter-spacing: 0.02em;
   opacity: 0.82;
@@ -1067,16 +1165,103 @@ textarea {
 }
 
 .markdown-part {
-  white-space: pre-wrap;
+  font-size: 0.96rem;
+  line-height: 1.62;
+  color: inherit;
+  white-space: normal;
+}
+
+.markdown-part > :last-child {
+  margin-bottom: 0;
 }
 
 .markdown-part p {
   margin: 0 0 0.65rem;
 }
 
+.markdown-part h1,
+.markdown-part h2,
+.markdown-part h3,
+.markdown-part h4 {
+  margin: 0.15rem 0 0.7rem;
+  color: inherit;
+  font-weight: 800;
+  line-height: 1.24;
+}
+
+.markdown-part h1 {
+  font-size: 1.18rem;
+}
+
+.markdown-part h2 {
+  font-size: 1.08rem;
+}
+
+.markdown-part h3,
+.markdown-part h4 {
+  font-size: 1rem;
+}
+
+.markdown-part ul,
+.markdown-part ol {
+  margin: 0 0 0.8rem;
+  padding-left: 1.35rem;
+  font-size: 0.96rem;
+  line-height: 1.68;
+}
+
+.markdown-part li {
+  margin: 0.18rem 0;
+  padding-left: 0.08rem;
+}
+
+.markdown-part li > p {
+  margin-bottom: 0.35rem;
+}
+
+.markdown-part ul ul,
+.markdown-part ul ol,
+.markdown-part ol ul,
+.markdown-part ol ol {
+  margin-top: 0.22rem;
+  margin-bottom: 0.28rem;
+}
+
+.markdown-part blockquote {
+  margin: 0 0 0.8rem;
+  padding: 0.22rem 0 0.22rem 0.9rem;
+  border-left: 3px solid color-mix(in srgb, var(--accent-primary) 34%, var(--line));
+  color: color-mix(in srgb, var(--text-secondary) 90%, var(--text-muted) 10%);
+}
+
+.markdown-part code {
+  padding: 0.08rem 0.34rem;
+  border-radius: 0.42rem;
+  background: color-mix(in srgb, var(--bg-panel-soft) 82%, var(--bg-panel-elevated) 18%);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.88em;
+}
+
+.markdown-part pre {
+  margin: 0 0 0.8rem;
+}
+
+.markdown-part pre code {
+  display: block;
+  padding: 0;
+  background: transparent;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.markdown-part strong {
+  font-weight: 800;
+}
+
 .markdown-part a {
   color: var(--accent);
   font-weight: 700;
+  text-underline-offset: 0.16em;
 }
 
 .markdown-part a.workspace-inline-link {

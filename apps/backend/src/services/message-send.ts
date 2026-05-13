@@ -24,6 +24,7 @@ import {
 } from "./image-uploads.js";
 import { CodexEventService } from "./codex-events.js";
 import { MessageStorageService } from "./message-storage.js";
+import { buildResolvedObservationPrompt } from "./observation-stack.js";
 import { ThreadQueueService } from "./thread-queue.js";
 
 type ThreadRow = {
@@ -134,15 +135,10 @@ export class MessageSendService {
 
     const thread = this.getSendableThread(threadId);
     const attachments = this.uploads.getMany(attachmentIds);
+    const finalText = this.buildVisibleMessageText(thread.id, normalizedText);
 
     if (thread.app_server_status !== "online") {
-      const failed = this.createUserTurnAndMessage(
-        thread,
-        normalizedText,
-        attachments,
-        "failed",
-        "failed"
-      );
+      const failed = this.createUserTurnAndMessage(thread, finalText, attachments, "failed", "failed");
       this.updateTurn(failed.turn.id, {
         status: "failed",
         completedAt: Date.now(),
@@ -153,13 +149,7 @@ export class MessageSendService {
       throw new OfflineError();
     }
 
-    const created = this.createUserTurnAndMessage(
-      thread,
-      normalizedText,
-      attachments,
-      "queued",
-      "queued"
-    );
+    const created = this.createUserTurnAndMessage(thread, finalText, attachments, "queued", "queued");
     this.publishMessage("thread.message_added", created.message);
     this.publishTurn(created.turn);
 
@@ -171,7 +161,7 @@ export class MessageSendService {
         messageId: created.message.id,
         turnId: created.turn.id,
         codexThreadId: thread.codex_thread_id,
-        text: normalizedText,
+        text: finalText,
         attachmentIds: attachments.map((attachment) => attachment.id)
       } satisfies SendPayload
     });
@@ -402,6 +392,58 @@ export class MessageSendService {
     transaction();
 
     return { message: this.getMessage(messageId), turn: this.getTurn(turnId) };
+  }
+
+  private buildVisibleMessageText(threadId: string, text: string): string {
+    const observationPrompt = this.getFirstMessageObservationPrompt(threadId);
+
+    if (observationPrompt === null) {
+      return text;
+    }
+
+    if (text.length === 0) {
+      return observationPrompt;
+    }
+
+    return `${observationPrompt}\n\n${text}`;
+  }
+
+  private getFirstMessageObservationPrompt(threadId: string): string | null {
+    const existing = this.database.sqlite
+      .prepare("SELECT 1 FROM messages WHERE thread_id = ? LIMIT 1")
+      .get(threadId);
+
+    if (existing !== undefined) {
+      return null;
+    }
+
+    const row = this.database.sqlite
+      .prepare(
+        `
+          SELECT app_servers.observation_prompt, app_servers.active_observation_skills_json
+          FROM threads
+          INNER JOIN app_servers ON app_servers.id = threads.app_server_id
+          WHERE threads.id = ?
+        `
+      )
+      .get(threadId) as
+      | {
+          readonly observation_prompt: string | null;
+          readonly active_observation_skills_json: string;
+        }
+      | undefined;
+
+    if (row === undefined) {
+      return null;
+    }
+
+    const activeObservationSkillNames = JSON.parse(row.active_observation_skills_json) as string[];
+
+    if (activeObservationSkillNames.length === 0) {
+      return null;
+    }
+
+    return buildResolvedObservationPrompt(row.observation_prompt, activeObservationSkillNames);
   }
 
   private storeCodexObservedJson(

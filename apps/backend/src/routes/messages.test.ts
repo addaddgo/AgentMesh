@@ -266,6 +266,59 @@ describe("message send API", () => {
     expect(draft.draft_markdown).toBe("unsent draft");
   });
 
+  it("injects the active observation stack prompt only on the first turn of a new thread", async () => {
+    const { app, tempDir, config } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    const scriptPath = createFakeCodexScript(tempDir);
+    const skillDir = path.join(config.skillsRoot, "observe-logs");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      "---\nname: observe-logs\ndescription: inspect logs\n---\nbody"
+    );
+    fs.mkdirSync(workspace);
+
+    const { threadId } = await createStartedAppServer(app, workspace, scriptPath, {
+      observationPrompt: "Use the active observation stack for this workspace.",
+      activeObservationSkillNames: ["observe-logs"]
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/messages/send",
+      payload: { threadId, text: "First task" }
+    });
+    expect(first.statusCode).toBe(202);
+    await waitForCompletedMessage(app, first.json<{ message: { id: string } }>().message.id);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/messages/send",
+      payload: { threadId, text: "Second task" }
+    });
+    expect(second.statusCode).toBe(202);
+    await waitForCompletedMessage(app, second.json<{ message: { id: string } }>().message.id);
+
+    const turnStarts = readJsonLines(path.join(workspace, "requests.ndjson")).filter(
+      (request): request is { method: string; params: { input?: unknown[] } } =>
+        typeof request === "object" &&
+        request !== null &&
+        (request as { method?: unknown }).method === "turn/start"
+    );
+
+    expect(turnStarts).toHaveLength(2);
+    expect(turnStarts[0]?.params.input).toEqual([
+      {
+        type: "text",
+        text: expect.stringContaining("Use the active observation stack for this workspace.")
+      }
+    ]);
+    expect((turnStarts[0]?.params.input?.[0] as { text?: string } | undefined)?.text).toContain(
+      "First task"
+    );
+    expect(turnStarts[1]?.params.input).toEqual([{ type: "text", text: "Second task" }]);
+  });
+
   it("rejects sends to gone threads", async () => {
     const { app, tempDir } = await setup();
     const workspace = path.join(tempDir, "workspace");
@@ -467,7 +520,8 @@ describe("message send API", () => {
 async function createStartedAppServer(
   app: TestBackend["app"],
   workspace: string,
-  scriptPath: string
+  scriptPath: string,
+  payloadOverrides: Record<string, unknown> = {}
 ): Promise<{ readonly appServerId: string; readonly threadId: string }> {
   const created = await app.inject({
     method: "POST",
@@ -475,7 +529,8 @@ async function createStartedAppServer(
     payload: {
       hostKind: "local",
       workspace,
-      command: `${process.execPath} ${scriptPath}`
+      command: `${process.execPath} ${scriptPath}`,
+      ...payloadOverrides
     }
   });
   const appServerId = created.json<{ id: string }>().id;
@@ -493,6 +548,15 @@ async function createStartedAppServer(
     .get(appServerId) as { id: string };
 
   return { appServerId, threadId: thread.id };
+}
+
+async function waitForCompletedMessage(app: TestBackend["app"], messageId: string): Promise<void> {
+  await waitFor(() => {
+    const row = app.database.sqlite
+      .prepare("SELECT status FROM messages WHERE id = ?")
+      .get(messageId) as { status: string } | undefined;
+    return row?.status === "completed";
+  });
 }
 
 function createFakeCodexScript(tempDir: string): string {

@@ -64,139 +64,189 @@
             {{ editingServer.status }}
           </el-tag>
         </header>
-
-        <el-alert
-          v-if="editingServer?.lastError"
-          class="last-error"
-          :title="editingServer.lastError"
-          type="error"
-          show-icon
-          :closable="false"
-        />
-
-        <div v-if="form.name.trim().length === 0" class="generated-name">
-          <span>Generated app-server name</span>
-          <strong>{{ generatedName }}</strong>
-        </div>
-
-        <el-form
-          class="server-form detailed"
-          label-position="top"
-          :model="form"
-          @submit.prevent="save"
-        >
-          <el-form-item label="Name" :error="fieldError('name')">
-            <el-input v-model="form.name" placeholder="Leave empty to generate from workspace" />
-          </el-form-item>
-
-          <div class="form-grid">
-            <el-form-item label="Host type">
-              <el-segmented v-model="form.hostKind" :options="hostKindOptions" />
-            </el-form-item>
-            <el-form-item label="Command" :error="fieldError('command')">
-              <el-input v-model="form.command" placeholder="codex app-server" />
-            </el-form-item>
-          </div>
-
-          <el-form-item label="Workspace" :error="fieldError('workspace')">
-            <el-input v-model="form.workspace" placeholder="/absolute/path/to/workspace" />
-          </el-form-item>
-
-          <el-form-item label="Environment" :error="fieldError('environment')">
-            <el-input
-              v-model="form.environmentText"
-              type="textarea"
-              :rows="5"
-              placeholder="OPENAI_API_KEY=...\nHTTPS_PROXY=http://127.0.0.1:7890"
-            />
-          </el-form-item>
-
-          <div v-if="form.hostKind === 'ssh'" class="form-grid">
-            <el-form-item label="SSH host" :error="fieldError('host')">
-              <el-input v-model="form.host" placeholder="buildbox.example.com" />
-            </el-form-item>
-            <el-form-item label="SSH user" :error="fieldError('sshUser')">
-              <el-input v-model="form.sshUser" placeholder="Optional user" />
-            </el-form-item>
-            <el-form-item label="SSH port" :error="fieldError('sshPort')">
-              <el-input-number
-                v-model="form.sshPort"
-                :min="1"
-                :max="65535"
-                controls-position="right"
-              />
-            </el-form-item>
-          </div>
-
+        <div class="server-editor-scroll">
           <el-alert
-            v-if="formError !== null"
-            :title="formError"
+            v-if="editingServer?.lastError"
+            class="last-error"
+            :title="editingServer.lastError"
             type="error"
             show-icon
             :closable="false"
           />
 
-          <div class="form-actions">
-            <el-button
-              type="primary"
-              :icon="editingServer === null ? CirclePlus : Select"
-              native-type="submit"
-              :loading="saving"
-              :disabled="form.workspace.trim().length === 0"
-              circle
-              :title="editingServer === null ? 'Create app-server' : 'Save changes'"
-              :aria-label="editingServer === null ? 'Create app-server' : 'Save changes'"
-            />
-            <el-button
-              :icon="RefreshLeft"
-              circle
-              title="Reset"
-              aria-label="Reset"
-              @click="resetForm"
-            />
+          <div v-if="form.name.trim().length === 0" class="generated-name">
+            <span>Generated app-server name</span>
+            <strong>{{ generatedName }}</strong>
           </div>
-        </el-form>
 
-        <section v-if="editingServer !== null" class="lifecycle-panel">
-          <div>
-            <p class="eyebrow">Lifecycle</p>
-            <h3>{{ appServerLabel(editingServer) }}</h3>
-            <p>
-              {{ editingServer.hostKind }} · {{ editingServer.command }}
-            </p>
-          </div>
-          <div class="lifecycle-actions">
-            <el-button
-              type="success"
-              :icon="VideoPlay"
-              :loading="runningAction === 'start'"
-              :disabled="isBusy(editingServer.status) || editingServer.status === 'online'"
-              circle
-              title="Start"
-              aria-label="Start"
-              @click="runLifecycle('start')"
+          <el-form
+            class="server-form detailed"
+            label-position="top"
+            :model="form"
+            @submit.prevent="save"
+          >
+            <el-form-item label="Name" :error="fieldError('name')">
+              <el-input v-model="form.name" placeholder="Leave empty to generate from workspace" />
+            </el-form-item>
+
+            <div class="form-grid">
+              <el-form-item label="Host type">
+                <el-segmented v-model="form.hostKind" :options="hostKindOptions" />
+              </el-form-item>
+              <el-form-item label="Command" :error="fieldError('command')">
+                <el-input v-model="form.command" placeholder="codex app-server" />
+              </el-form-item>
+            </div>
+
+            <el-form-item label="Workspace" :error="fieldError('workspace')">
+              <el-input v-model="form.workspace" placeholder="/absolute/path/to/workspace" />
+            </el-form-item>
+
+            <el-form-item label="Environment" :error="fieldError('environment')">
+              <el-input
+                v-model="form.environmentText"
+                type="textarea"
+                :rows="5"
+                placeholder="OPENAI_API_KEY=...\nHTTPS_PROXY=http://127.0.0.1:7890"
+              />
+            </el-form-item>
+
+            <section class="observation-stack-settings">
+              <div class="sidebar-title">
+                <strong>Observation Stack</strong>
+              </div>
+              <p class="observation-intro">
+                Define the first-message harness prompt and the skill stack Codex should treat as
+                workspace observation infrastructure.
+              </p>
+              <el-form-item
+                label="Observation Prompt"
+                :error="fieldError('observationPrompt')"
+              >
+                <el-input
+                  v-model="form.observationPrompt"
+                  type="textarea"
+                  :rows="6"
+                  :placeholder="defaultObservationPrompt"
+                />
+              </el-form-item>
+              <p class="settings-help">
+                Leave this empty to use the default workspace observation-stack prompt.
+              </p>
+              <el-form-item
+                label="Active Observation Skills"
+                :error="fieldError('activeObservationSkillNames')"
+              >
+                <p v-if="availableSkillsLoading" class="observation-skill-loading">
+                  Refreshing workspace skills…
+                </p>
+                <el-checkbox-group v-model="form.activeObservationSkillNames">
+                  <div v-if="availableSkills.length > 0" class="observation-skill-flow">
+                    <label
+                      v-for="skill in availableSkills"
+                      :key="skill.path"
+                      class="observation-skill-card"
+                    >
+                      <el-checkbox :value="skill.name">
+                        <span class="observation-skill-name">${{ skill.name }}</span>
+                      </el-checkbox>
+                      <small>{{ skill.description }}</small>
+                    </label>
+                  </div>
+                  <div v-else class="observation-skill-empty">
+                    No installed workspace skills found for this app-server yet.
+                  </div>
+                </el-checkbox-group>
+              </el-form-item>
+            </section>
+
+            <div v-if="form.hostKind === 'ssh'" class="form-grid">
+              <el-form-item label="SSH host" :error="fieldError('host')">
+                <el-input v-model="form.host" placeholder="buildbox.example.com" />
+              </el-form-item>
+              <el-form-item label="SSH user" :error="fieldError('sshUser')">
+                <el-input v-model="form.sshUser" placeholder="Optional user" />
+              </el-form-item>
+              <el-form-item label="SSH port" :error="fieldError('sshPort')">
+                <el-input-number
+                  v-model="form.sshPort"
+                  :min="1"
+                  :max="65535"
+                  controls-position="right"
+                />
+              </el-form-item>
+            </div>
+
+            <el-alert
+              v-if="formError !== null"
+              :title="formError"
+              type="error"
+              show-icon
+              :closable="false"
             />
-            <el-button
-              type="warning"
-              :icon="VideoPause"
-              :loading="runningAction === 'stop'"
-              :disabled="isBusy(editingServer.status) || editingServer.status === 'offline'"
-              circle
-              title="Stop"
-              aria-label="Stop"
-              @click="runLifecycle('stop')"
-            />
-            <el-button
-              :icon="RefreshRight"
-              :loading="runningAction === 'restart'"
-              :disabled="isBusy(editingServer.status)"
-              circle
-              title="Restart"
-              aria-label="Restart"
-              @click="runLifecycle('restart')"
-            />
-          </div>
-        </section>
+
+            <div class="form-actions">
+              <el-button
+                type="primary"
+                :icon="editingServer === null ? CirclePlus : Select"
+                native-type="submit"
+                :loading="saving"
+                :disabled="form.workspace.trim().length === 0"
+                circle
+                :title="editingServer === null ? 'Create app-server' : 'Save changes'"
+                :aria-label="editingServer === null ? 'Create app-server' : 'Save changes'"
+              />
+              <el-button
+                :icon="RefreshLeft"
+                circle
+                title="Reset"
+                aria-label="Reset"
+                @click="resetForm"
+              />
+            </div>
+          </el-form>
+
+          <section v-if="editingServer !== null" class="lifecycle-panel">
+            <div>
+              <p class="eyebrow">Lifecycle</p>
+              <h3>{{ appServerLabel(editingServer) }}</h3>
+              <p>
+                {{ editingServer.hostKind }} · {{ editingServer.command }}
+              </p>
+            </div>
+            <div class="lifecycle-actions">
+              <el-button
+                type="success"
+                :icon="VideoPlay"
+                :loading="runningAction === 'start'"
+                :disabled="isBusy(editingServer.status) || editingServer.status === 'online'"
+                circle
+                title="Start"
+                aria-label="Start"
+                @click="runLifecycle('start')"
+              />
+              <el-button
+                type="warning"
+                :icon="VideoPause"
+                :loading="runningAction === 'stop'"
+                :disabled="isBusy(editingServer.status) || editingServer.status === 'offline'"
+                circle
+                title="Stop"
+                aria-label="Stop"
+                @click="runLifecycle('stop')"
+              />
+              <el-button
+                :icon="RefreshRight"
+                :loading="runningAction === 'restart'"
+                :disabled="isBusy(editingServer.status)"
+                circle
+                title="Restart"
+                aria-label="Restart"
+                @click="runLifecycle('restart')"
+              />
+            </div>
+          </section>
+        </div>
       </main>
     </div>
   </section>
@@ -213,7 +263,7 @@ import {
   VideoPause,
   VideoPlay
 } from "@element-plus/icons-vue";
-import type { ApiErrorDetail, AppServerDto, AppServerStatus } from "@agentmesh/shared";
+import type { ApiErrorDetail, AppServerDto, AppServerStatus, TargetSkillDto } from "@agentmesh/shared";
 import { computed, onMounted, reactive, ref } from "vue";
 
 import { apiClient, ApiClientError, type CreateAppServerPayload } from "../api/client";
@@ -230,6 +280,8 @@ type AppServerForm = {
   workspace: string;
   command: string;
   environmentText: string;
+  observationPrompt: string;
+  activeObservationSkillNames: string[];
 };
 
 const hostKindOptions = [
@@ -248,12 +300,17 @@ const saving = ref(false);
 const runningAction = ref<"start" | "stop" | "restart" | null>(null);
 const fieldErrors = ref<Record<string, string>>({});
 const formError = ref<string | null>(null);
+const availableSkills = ref<readonly TargetSkillDto[]>([]);
+const availableSkillsLoading = ref(false);
 const form = reactive<AppServerForm>(emptyForm());
 
 const editingServer = computed(
   () => appServers.appServers.find((server) => server.id === editingId.value) ?? null
 );
 const generatedName = computed(() => generateNamePreview(form.workspace, appServers.appServers));
+const defaultObservationPrompt = computed(() =>
+  buildDefaultObservationPrompt(form.activeObservationSkillNames)
+);
 const selectedTheme = computed<ThemeMode>({
   get: () => theme.theme,
   set: (value) => {
@@ -274,12 +331,16 @@ function emptyForm(): AppServerForm {
     sshPort: undefined,
     workspace: "",
     command: "",
-    environmentText: ""
+    environmentText: "",
+    observationPrompt: "",
+    activeObservationSkillNames: []
   };
 }
 
 function newServer(): void {
   editingId.value = null;
+  availableSkills.value = [];
+  availableSkillsLoading.value = false;
   resetForm();
 }
 
@@ -295,6 +356,9 @@ function editServer(server: AppServerDto): void {
   form.workspace = server.workspace;
   form.command = server.command;
   form.environmentText = formatEnvironment(server.environment);
+  form.observationPrompt = server.observationPrompt ?? "";
+  form.activeObservationSkillNames = [...server.activeObservationSkillNames];
+  void loadSkills(server.id);
 }
 
 function resetForm(): void {
@@ -327,13 +391,29 @@ async function save(): Promise<void> {
   }
 }
 
+async function loadSkills(appServerId: string): Promise<void> {
+  availableSkillsLoading.value = true;
+  try {
+    availableSkills.value = await apiClient.listTargetSkills(appServerId);
+  } catch (error) {
+    availableSkills.value = [];
+    notifyError(error, "Failed to load workspace skills");
+  } finally {
+    availableSkillsLoading.value = false;
+  }
+}
+
 function toPayload(): CreateAppServerPayload {
   const payload: CreateAppServerPayload = {
     hostKind: form.hostKind,
     workspace: form.workspace,
     ...(form.name.trim().length > 0 ? { name: form.name } : {}),
     ...(form.command.trim().length > 0 ? { command: form.command } : {}),
-    environment: parseEnvironmentText(form.environmentText)
+    environment: parseEnvironmentText(form.environmentText),
+    ...(form.observationPrompt.trim().length > 0
+      ? { observationPrompt: form.observationPrompt }
+      : {}),
+    activeObservationSkillNames: [...form.activeObservationSkillNames]
   };
 
   if (form.hostKind === "ssh") {
@@ -481,4 +561,101 @@ function statusTagType(status: AppServerStatus): "success" | "warning" | "danger
   }
   return "info";
 }
+
+function buildDefaultObservationPrompt(activeObservationSkillNames: readonly string[]): string {
+  const skillsSummary =
+    activeObservationSkillNames.length === 0
+      ? "No active observation skills are configured for this workspace yet."
+      : `Active observation skills: ${activeObservationSkillNames.map((name) => `$${name}`).join(", ")}.`;
+
+  return [
+    "This workspace has an active observation stack.",
+    "Treat the listed observation skills as the default harness observation infrastructure for this workspace.",
+    "Before doing ad hoc inspection, use these observation skills first unless they are clearly insufficient for the task.",
+    "Use gradual disclosure: start with the cheapest relevant observation capability, deepen only when needed, and ground decisions in observations from this stack.",
+    skillsSummary
+  ].join("\n\n");
+}
 </script>
+
+<style scoped>
+.server-editor {
+  display: grid;
+  align-content: start;
+}
+
+.server-editor-scroll {
+  display: grid;
+  gap: 0.9rem;
+  overflow: visible;
+}
+
+.observation-stack-settings {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  border: 1px solid #485260;
+  border-radius: 1rem;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--bg-panel-elevated) 86%, #ffffff 14%), var(--bg-panel-soft)),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent-primary) 12%, transparent), transparent 15rem);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.observation-intro {
+  margin: -0.15rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.settings-help {
+  margin: -0.35rem 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 0.82rem;
+}
+
+.observation-skill-loading {
+  margin-bottom: 0.55rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.observation-skill-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.observation-skill-empty {
+  padding: 0.8rem 0.95rem;
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 56%, #485260);
+  border-radius: 0.8rem;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-panel-elevated) 56%, transparent);
+}
+
+.observation-skill-card {
+  display: grid;
+  flex: 0 1 320px;
+  gap: 0.24rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #485260;
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--bg-panel-elevated) 74%, transparent);
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.observation-skill-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent-primary) 38%, #485260);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--shadow-panel) 74%, transparent);
+}
+
+.observation-skill-name {
+  font-weight: 700;
+}
+</style>

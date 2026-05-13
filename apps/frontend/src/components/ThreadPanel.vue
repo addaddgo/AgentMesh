@@ -14,9 +14,16 @@
           <strong>{{ threadTitle }}</strong>
         </div>
         <div class="thread-header-status-row">
-          <el-tag size="small" :type="threadStatusTagType">
+          <span
+            class="thread-status-text"
+            :class="{
+              'thread-status-text-working': effectiveThreadStatus === 'working',
+              'thread-status-text-not-loaded': effectiveThreadStatus === 'notLoaded',
+              'thread-status-text-idle': effectiveThreadStatus !== 'working' && effectiveThreadStatus !== 'notLoaded'
+            }"
+          >
             {{ effectiveThreadStatus }}
-          </el-tag>
+          </span>
           <el-tag v-if="thread.isGone" size="small" type="danger">Gone</el-tag>
           <span class="thread-param">mode: {{ threadCollaborationMode }}</span>
           <span class="thread-param">model: {{ threadModel }}</span>
@@ -315,7 +322,7 @@
             />
             <el-button
               v-if="isWorking"
-              type="warning"
+              class="thread-stop-button"
               :icon="VideoPause"
               :loading="stopping"
               :disabled="!canStop"
@@ -334,7 +341,7 @@
               @click="fileInput?.click()"
             />
             <el-button
-              type="primary"
+              class="thread-send-button"
               :icon="Promotion"
               :disabled="!canSend"
               circle
@@ -460,9 +467,10 @@ markdownRenderer.renderer.rules.link_open = (tokens, idx, options, env, self) =>
     return defaultLinkOpen(tokens, idx, options, env, self);
   }
   const href = token?.attrGet("href") ?? "";
-  if (href.startsWith(WORKSPACE_LINK_PREFIX)) {
+  const workspacePath = workspacePathFromHref(href);
+  if (workspacePath !== null) {
     token.attrSet("href", "#");
-    token.attrSet("data-workspace-path", decodeURIComponent(href.slice(WORKSPACE_LINK_PREFIX.length)));
+    token.attrSet("data-workspace-path", workspacePath);
     token.attrJoin("class", "workspace-inline-link");
   }
 
@@ -617,15 +625,6 @@ const effectiveThreadStatus = computed(() => {
     return "working";
   }
   return props.thread.status ?? "idle";
-});
-const threadStatusTagType = computed(() => {
-  if (effectiveThreadStatus.value === "working") {
-    return "warning";
-  }
-  if (effectiveThreadStatus.value === "notLoaded") {
-    return "info";
-  }
-  return "success";
 });
 const threadModel = computed(() => {
   const runtimeModel = props.thread?.runtime?.model;
@@ -1763,21 +1762,38 @@ function toWorkspaceRelativePath(rawPath: string): string | null {
   return normalized.replace(/^\.\//u, "");
 }
 
+function workspacePathFromHref(href: string): string | null {
+  if (href.startsWith(WORKSPACE_LINK_PREFIX)) {
+    return decodeURIComponent(href.slice(WORKSPACE_LINK_PREFIX.length));
+  }
+
+  // Leave normal web links alone.
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(href)) {
+    return null;
+  }
+
+  return toWorkspaceRelativePath(href);
+}
+
 async function handleMessageListClick(event: MouseEvent): Promise<void> {
   const target = event.target;
   if (!(target instanceof HTMLElement)) {
     return;
   }
 
-  const link = target.closest("a[data-workspace-path]");
+  const link = target.closest("a");
   if (!(link instanceof HTMLAnchorElement)) {
+    return;
+  }
+
+  const workspacePath = link.dataset.workspacePath ?? workspacePathFromHref(link.getAttribute("href") ?? "");
+  if (workspacePath === null || workspacePath.length === 0) {
     return;
   }
 
   event.preventDefault();
   const appServerId = props.appServer?.id;
-  const workspacePath = link.dataset.workspacePath;
-  if (appServerId === undefined || workspacePath === undefined || workspacePath.length === 0) {
+  if (appServerId === undefined) {
     return;
   }
 
@@ -2041,6 +2057,40 @@ function fuzzyIncludes(candidate: string, query: string): boolean {
 .workspace-search-result.selected {
   border-color: var(--border-list);
   background: var(--bg-panel-elevated);
+}
+
+.thread-status-text {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.35rem;
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.thread-status-text-not-loaded {
+  color: color-mix(in srgb, var(--ink-soft) 92%, var(--text-muted) 8%);
+}
+
+.thread-status-text-working {
+  color: color-mix(in srgb, var(--accent-warning) 74%, var(--text-primary) 26%);
+}
+
+.thread-status-text-idle {
+  color: color-mix(in srgb, var(--accent-success) 62%, var(--text-primary) 38%);
+}
+
+.thread-send-button {
+  border-color: color-mix(in srgb, var(--accent-primary) 24%, var(--line)) !important;
+  background: color-mix(in srgb, var(--accent-primary) 14%, var(--bg-panel-elevated)) !important;
+  color: var(--text-primary) !important;
+}
+
+.thread-stop-button {
+  border-color: color-mix(in srgb, var(--accent-warning) 28%, var(--line)) !important;
+  background: color-mix(in srgb, var(--accent-warning) 12%, var(--bg-panel-elevated)) !important;
+  color: var(--text-primary) !important;
 }
 
 @keyframes thread-ready-pulse {

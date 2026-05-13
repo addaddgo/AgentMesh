@@ -24,6 +24,8 @@ export const appServers = sqliteTable(
     workspace: text("workspace").notNull(),
     command: text("command").notNull(),
     environmentJson: text("environment_json").notNull().default("{}"),
+    observationPrompt: text("observation_prompt"),
+    activeObservationSkillsJson: text("active_observation_skills_json").notNull().default("[]"),
     status: text("status", {
       enum: ["offline", "starting", "online", "stopping", "error"]
     }).notNull(),

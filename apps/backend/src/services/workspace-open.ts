@@ -16,11 +16,13 @@ type AppServerRow = {
 };
 
 type CodeCommandRunner = (args: readonly string[]) => void;
+type FocusUriRunner = (uri: string) => void;
 
 export class WorkspaceOpenService {
   public constructor(
     private readonly database: DatabaseHandle,
-    private readonly runCodeCommand: CodeCommandRunner = spawnCodeCommand
+    private readonly runCodeCommand: CodeCommandRunner = spawnCodeCommand,
+    private readonly focusUri: FocusUriRunner = bestEffortFocusUri
   ) {}
 
   public openInVscode(
@@ -30,12 +32,13 @@ export class WorkspaceOpenService {
     const appServer = this.getAppServer(appServerId);
     const normalizedPath = normalizeRelativeFilePath(relativePath);
 
-    const args =
+    const openTarget =
       appServer.host_kind === "local"
-        ? localOpenArgs(appServer.workspace, normalizedPath)
-        : remoteOpenArgs(appServer.host, appServer.workspace, normalizedPath);
+        ? localOpenTarget(appServer.workspace, normalizedPath)
+        : remoteOpenTarget(appServer.host, appServer.workspace, normalizedPath);
 
-    this.runCodeCommand(args);
+    this.runCodeCommand(openTarget.args);
+    this.focusUri(openTarget.focusUri);
     return { opened: true };
   }
 
@@ -52,19 +55,24 @@ export class WorkspaceOpenService {
   }
 }
 
-function localOpenArgs(workspace: string, relativePath: string): readonly string[] {
+function localOpenTarget(
+  workspace: string,
+  relativePath: string
+): { readonly args: readonly string[]; readonly focusUri: string } {
   const absoluteWorkspace = path.resolve(workspace);
   const absoluteFile = path.resolve(workspace, relativePath);
   assertPathInside(absoluteWorkspace, absoluteFile, "Workspace file path must stay inside workspace");
-  return [
-    "--folder-uri",
-    pathToFileURL(absoluteWorkspace).href,
-    "--file-uri",
-    pathToFileURL(absoluteFile).href
-  ];
+  return {
+    args: [absoluteWorkspace, "--goto", absoluteFile],
+    focusUri: filePathFocusUri(absoluteFile)
+  };
 }
 
-function remoteOpenArgs(host: string, workspace: string, relativePath: string): readonly string[] {
+function remoteOpenTarget(
+  host: string,
+  workspace: string,
+  relativePath: string
+): { readonly args: readonly string[]; readonly focusUri: string } {
   const absoluteWorkspace = path.posix.resolve(workspace);
   const absoluteFile = path.posix.resolve(workspace, relativePath);
   assertPosixPathInside(
@@ -72,13 +80,11 @@ function remoteOpenArgs(host: string, workspace: string, relativePath: string): 
     absoluteFile,
     "Workspace file path must stay inside workspace"
   );
-  const authority = `ssh-remote+${host}`;
-  return [
-    "--folder-uri",
-    `vscode-remote://${authority}${absoluteWorkspace}`,
-    "--file-uri",
-    `vscode-remote://${authority}${absoluteFile}`
-  ];
+  return {
+    args: ["--remote", `ssh-remote+${host}`, absoluteWorkspace, absoluteFile],
+    // Inferred from VS Code remote URI format; used only as a best-effort focus hint.
+    focusUri: `vscode://vscode-remote/ssh-remote+${encodeURIComponent(host)}${absoluteFile}`
+  };
 }
 
 function normalizeRelativeFilePath(value: string): string {
@@ -112,5 +118,20 @@ function spawnCodeCommand(args: readonly string[]): void {
 
   if (result.status !== 0) {
     throw new InternalApiError("Failed to launch VS Code");
+  }
+}
+
+function filePathFocusUri(absoluteFile: string): string {
+  return `vscode://file${pathToFileURL(absoluteFile).pathname}`;
+}
+
+function bestEffortFocusUri(uri: string): void {
+  const result = spawnSync("xdg-open", [uri], {
+    encoding: "utf8",
+    stdio: "ignore"
+  });
+
+  if (result.error !== undefined || result.status !== 0) {
+    return;
   }
 }

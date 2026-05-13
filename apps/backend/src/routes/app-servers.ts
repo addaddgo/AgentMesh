@@ -23,9 +23,11 @@ import {
   type PatchAppServerInput
 } from "../services/app-servers.js";
 import type { DatabaseHandle } from "../db/index.js";
+import { RequestValidationError } from "../errors.js";
 import { ThreadSyncService } from "../services/thread-sync.js";
 import { WorkspaceFileService } from "../services/workspace-files.js";
 import { WorkspaceOpenService } from "../services/workspace-open.js";
+import { SkillService } from "../services/skills.js";
 import { validateBody, validateParams, validateQuery } from "../validation.js";
 
 type CodexRequester = Parameters<ThreadSyncService["materializeCodexThread"]>[1];
@@ -76,7 +78,9 @@ const createAppServerSchema = z
     sshPort: z.number().int().min(1).max(65_535).optional(),
     workspace: z.string().trim().min(1),
     command: optionalTextSchema,
-    environment: environmentSchema
+    environment: environmentSchema,
+    observationPrompt: z.string().trim().max(8_000).optional(),
+    activeObservationSkillNames: z.array(z.string().trim().min(1)).max(64).optional()
   })
   .strict();
 
@@ -92,6 +96,7 @@ export async function registerAppServerRoutes(app: FastifyInstance): Promise<voi
   const codexEvents = new CodexEventService(app.database);
   const workspaceFiles = new WorkspaceFileService(app.database);
   const workspaceOpen = new WorkspaceOpenService(app.database);
+  const skills = new SkillService(app.database, app.config, app.events);
 
   app.get(
     "/api/app-servers",
@@ -104,7 +109,9 @@ export async function registerAppServerRoutes(app: FastifyInstance): Promise<voi
     "/api/app-servers",
     { preHandler: validateBody(createAppServerSchema) },
     async (request, reply) => {
-      const appServer = service.create(request.body as CreateAppServerInput);
+      const input = request.body as CreateAppServerInput;
+      validateObservationSkills(skills, input.activeObservationSkillNames);
+      const appServer = service.create(input);
       reply.code(201);
       return appServer;
     }
@@ -117,7 +124,9 @@ export async function registerAppServerRoutes(app: FastifyInstance): Promise<voi
     },
     async (request) => {
       const { id } = request.params as z.infer<typeof appServerParamsSchema>;
-      return service.update(id, request.body as PatchAppServerInput);
+      const input = request.body as PatchAppServerInput;
+      validateObservationSkills(skills, input.activeObservationSkillNames);
+      return service.update(id, input);
     }
   );
 
@@ -341,6 +350,27 @@ export async function registerAppServerRoutes(app: FastifyInstance): Promise<voi
       return result;
     }
   );
+}
+
+function validateObservationSkills(
+  skills: SkillService,
+  activeObservationSkillNames: readonly string[] | undefined
+): void {
+  if (activeObservationSkillNames === undefined) {
+    return;
+  }
+
+  const available = new Set(skills.list().map((skill) => skill.name));
+  for (const skillName of activeObservationSkillNames) {
+    if (!available.has(skillName)) {
+      throw new RequestValidationError("Observation skill is not available", [
+        {
+          path: ["activeObservationSkillNames"],
+          message: `Unknown observation skill: ${skillName}`
+        }
+      ]);
+    }
+  }
 }
 
 function normalizeCodexSkills(value: unknown): CodexSkillListResponse["skills"] {

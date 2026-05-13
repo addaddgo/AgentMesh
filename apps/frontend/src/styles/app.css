@@ -1,5 +1,7 @@
 :root,
 :root[data-theme="light"],
+html.theme-light,
+body.theme-light,
 .theme-light {
   color: #2a2114;
   background: #fff5cf;
@@ -77,6 +79,8 @@
 }
 
 :root[data-theme="dark"],
+html.theme-dark,
+body.theme-dark,
 .theme-dark {
   color: #e7dec9;
   background: #111612;
@@ -185,6 +189,8 @@ textarea {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background: var(--bg-app);
+  color: var(--text-primary);
 }
 
 .brand {
@@ -235,6 +241,29 @@ textarea {
   display: flex;
   align-items: center;
   gap: 0.35rem;
+}
+
+.theme-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.32rem 0.58rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-panel-elevated);
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.theme-indicator-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--accent-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 18%, transparent);
 }
 
 .top-board-control {

@@ -37,7 +37,16 @@ export const useThemeStore = defineStore("theme", {
         return;
       }
       document.documentElement.dataset.theme = this.theme;
+      document.documentElement.classList.remove("theme-light", "theme-dark");
+      document.documentElement.classList.add(`theme-${this.theme}`);
       document.documentElement.style.colorScheme = this.theme;
+      const body = document.body;
+      if (body !== null) {
+        body.dataset.theme = this.theme;
+        body.classList.remove("theme-light", "theme-dark");
+        body.classList.add(`theme-${this.theme}`);
+        body.style.colorScheme = this.theme;
+      }
     }
   }
 });

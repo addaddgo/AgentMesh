@@ -11,6 +11,10 @@
         <RouterLink to="/settings">Settings</RouterLink>
       </nav>
       <div id="top-board-actions" class="top-board-actions" />
+      <div class="theme-indicator" :title="`Current theme: ${theme.theme}`">
+        <span class="theme-indicator-dot" />
+        {{ theme.theme }}
+      </div>
 
       <div class="connection" :class="uiLayout.sseState">
         <span />

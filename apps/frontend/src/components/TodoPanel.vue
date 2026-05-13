@@ -1,5 +1,11 @@
 <template>
-  <section class="todo-panel" @drop.prevent="onDrop($event)" @dragover.prevent="onDragOver">
+  <section
+    class="todo-panel"
+    :class="`theme-${theme.theme}`"
+    :style="todoThemeVars"
+    @drop.prevent="onDrop($event)"
+    @dragover.prevent="onDragOver"
+  >
     <header class="todo-header">
       <h2>Todo</h2>
       <el-button
@@ -209,6 +215,7 @@ import type { TodoItemDto } from "@agentmesh/shared";
 import { computed, onMounted, reactive, ref } from "vue";
 
 import { useTodoStore } from "../stores/todos";
+import { useThemeStore } from "../stores/theme";
 import { writeMessageTextDrag } from "../utils/messageDragDrop";
 
 const emit = defineEmits<{
@@ -216,6 +223,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useTodoStore();
+const theme = useThemeStore();
 const searchQuery = ref("");
 const newName = ref("");
 const newDescription = ref("");
@@ -268,6 +276,34 @@ const groupedItems = computed(() => {
     });
   }
   return result;
+});
+
+const todoThemeVars = computed<Record<string, string>>(() => {
+  if (theme.theme === "dark") {
+    return {
+      "--todo-panel-bg": "#1a211c",
+      "--todo-header-bg": "#214130",
+      "--todo-item-bg": "rgba(26, 33, 28, 0.94)",
+      "--todo-sticky-bg": "#1a211c",
+      "--todo-input-bg": "rgba(30, 38, 32, 0.92)",
+      "--todo-input-border": "rgba(121, 138, 127, 0.22)",
+      "--todo-hover-bg": "color-mix(in srgb, var(--accent-primary) 12%, transparent)",
+      "--todo-group-hover-bg": "color-mix(in srgb, var(--accent-primary) 10%, transparent)",
+      "--todo-shadow-inset": "color-mix(in srgb, var(--warm-white) 22%, transparent)"
+    };
+  }
+
+  return {
+    "--todo-panel-bg": "#f4f2ea",
+    "--todo-header-bg": "#d4edda",
+    "--todo-item-bg": "rgba(255, 253, 244, 0.9)",
+    "--todo-sticky-bg": "#f4f2ea",
+    "--todo-input-bg": "rgba(255, 255, 255, 0.82)",
+    "--todo-input-border": "rgba(138, 110, 64, 0.18)",
+    "--todo-hover-bg": "color-mix(in srgb, var(--accent-primary) 10%, transparent)",
+    "--todo-group-hover-bg": "color-mix(in srgb, var(--accent-primary) 8%, transparent)",
+    "--todo-shadow-inset": "color-mix(in srgb, var(--warm-white) 85%, transparent)"
+  };
 });
 
 const filteredItems = computed(() => {
@@ -470,10 +506,11 @@ async function onDrop(event: DragEvent): Promise<void> {
   padding: 0.75rem;
   border: 1px solid var(--line);
   border-radius: 1.15rem;
-  background: var(--bg-panel-soft);
+  background: var(--todo-panel-bg, var(--bg-panel-soft));
+  color: var(--text-primary);
   box-shadow:
     0 18px 46px var(--warm-shadow),
-    0 1px 0 color-mix(in srgb, var(--warm-white) 85%, transparent) inset;
+    0 1px 0 var(--todo-shadow-inset, color-mix(in srgb, var(--warm-white) 85%, transparent)) inset;
   overflow: hidden;
 }
 
@@ -485,7 +522,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   padding: 0.62rem 0.75rem;
   border-bottom: 1px solid var(--line);
   border-radius: 1.15rem 1.15rem 0 0;
-  background: var(--bg-tool-header);
+  background: var(--todo-header-bg, var(--bg-tool-header));
 }
 
 .todo-header h2 {
@@ -508,6 +545,20 @@ async function onDrop(event: DragEvent): Promise<void> {
   gap: 0.35rem;
 }
 
+.todo-search :deep(.el-input__wrapper),
+.todo-add-form :deep(.el-input__wrapper),
+.todo-date-picker :deep(.el-input__wrapper),
+.todo-edit-inline :deep(.el-input__wrapper) {
+  background: var(--todo-input-bg);
+  box-shadow: 0 0 0 1px var(--todo-input-border) inset;
+}
+
+.todo-edit-inline :deep(.el-textarea__inner) {
+  background: var(--todo-input-bg);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--todo-input-border) inset;
+}
+
 .todo-item {
   display: flex;
   align-items: flex-start;
@@ -515,7 +566,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   padding: 0.5rem;
   border: 1px solid var(--border-list);
   border-radius: 0.75rem;
-  background: var(--bg-row-subtle);
+  background: var(--todo-item-bg, var(--bg-row-subtle));
   cursor: grab;
   transition:
     border-color 120ms ease,
@@ -549,7 +600,7 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 
 .todo-name.is-editable:hover {
-  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  background: var(--todo-hover-bg);
   border-radius: 0.3rem;
 }
 
@@ -586,7 +637,7 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 
 .todo-description:hover {
-  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  background: var(--todo-hover-bg);
   border-radius: 0.3rem;
 }
 
@@ -699,14 +750,14 @@ async function onDrop(event: DragEvent): Promise<void> {
   border-bottom: 1px solid var(--line-subtle);
   position: sticky;
   top: 0;
-  background: var(--bg-panel-soft);
+  background: var(--todo-sticky-bg, var(--bg-panel-soft));
   z-index: 1;
   cursor: pointer;
   user-select: none;
 }
 
 .todo-group-header:hover {
-  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  background: var(--todo-group-hover-bg);
 }
 
 .todo-group-arrow {

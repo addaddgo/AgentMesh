@@ -24,10 +24,19 @@
     </Teleport>
 
     <main class="thread-canvas">
-      <div v-if="threadLeaves.length > 0 || todoPanelVisible || statsPanelVisible" class="thread-card-flow">
-        <template v-if="todoPanelVisible || statsPanelVisible">
+      <div
+        v-if="threadLeaves.length > 0 || todoPanelVisible || statsPanelVisible || accountLimitsPanelVisible"
+        class="thread-card-flow"
+      >
+        <template v-if="todoPanelVisible || statsPanelVisible || accountLimitsPanelVisible">
           <TodoPanel v-if="todoPanelVisible" key="todo" class="thread-card" @close="todoPanelVisible = false" />
           <WorkspaceStatsPanel v-if="statsPanelVisible" key="stats" class="thread-card" @close="statsPanelVisible = false" />
+          <AccountLimitsPanel
+            v-if="accountLimitsPanelVisible"
+            key="account-limits"
+            class="thread-card"
+            @close="accountLimitsPanelVisible = false"
+          />
         </template>
         <template v-for="group in workspaceGroups" :key="group.appServerId">
           <article
@@ -45,6 +54,7 @@
               :draft="draftForLeaf(leaf)"
               :focused="focusedThreadLeafId === leaf.id"
               :resuming="isResumingLeaf(leaf)"
+              :ready-pulse-key="readyPulseKeyForLeaf(leaf)"
               @draft="setDraftForLeaf(leaf, $event)"
               @save-draft="saveDraftForLeaf(leaf)"
               @send="sendDraftForLeaf(leaf, $event)"
@@ -182,6 +192,10 @@
             <span class="tool-card-name">Workspace Stats</span>
             <el-button size="small" type="primary" :icon="Plus" circle title="Add" aria-label="Add Workspace Stats" @click="addTool('stats')" />
           </div>
+          <div class="tool-card">
+            <span class="tool-card-name">Account Limits</span>
+            <el-button size="small" type="primary" :icon="Plus" circle title="Add" aria-label="Add Account Limits" @click="addTool('account-limits')" />
+          </div>
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -231,11 +245,13 @@ import type {
 import { computed, onMounted, ref, watch } from "vue";
 
 import ThreadPanel from "../components/ThreadPanel.vue";
+import AccountLimitsPanel from "../components/AccountLimitsPanel.vue";
 import TodoPanel from "../components/TodoPanel.vue";
 import WorkspaceStatsPanel from "../components/WorkspaceStatsPanel.vue";
 import { apiClient } from "../api/client";
 import { useAppServerStore } from "../stores/appServers";
 import { useMessageStore } from "../stores/messages";
+import { useThreadReadyStore } from "../stores/threadReady";
 import { useThreadStore } from "../stores/threads";
 import {
   createLeaf,
@@ -253,6 +269,7 @@ type SplitPaneLeaf = Extract<SplitPaneTree, { readonly type: "leaf" }>;
 const appServers = useAppServerStore();
 const threads = useThreadStore();
 const messages = useMessageStore();
+const threadReady = useThreadReadyStore();
 const uiLayout = useUiLayoutStore();
 
 const boardTree = ref<SplitPaneTree | null>(null);
@@ -271,12 +288,18 @@ const statsPanelVisible = ref(localStorage.getItem("statsPanelVisible") === "tru
 watch(statsPanelVisible, (visible) => {
   localStorage.setItem("statsPanelVisible", String(visible));
 });
+const accountLimitsPanelVisible = ref(localStorage.getItem("accountLimitsPanelVisible") === "true");
+watch(accountLimitsPanelVisible, (visible) => {
+  localStorage.setItem("accountLimitsPanelVisible", String(visible));
+});
 
-function addTool(tool: "todo" | "stats"): void {
+function addTool(tool: "todo" | "stats" | "account-limits"): void {
   if (tool === "todo") {
     todoPanelVisible.value = true;
-  } else {
+  } else if (tool === "stats") {
     statsPanelVisible.value = true;
+  } else {
+    accountLimitsPanelVisible.value = true;
   }
   addDialogOpen.value = false;
 }
@@ -401,6 +424,7 @@ async function syncThreads(appServerId: string): Promise<void> {
 async function openThreadData(thread: ThreadDto): Promise<void> {
   await threads.openThread(thread);
   await Promise.all([messages.load(thread.id), messages.loadQueue(thread.id)]);
+  threadReady.prime(thread.id);
   threads.focusThread(thread.appServerId, thread.id);
   uiLayout.focusThread(thread.appServerId, thread.id);
   appServers.select(thread.appServerId);
@@ -456,6 +480,11 @@ function queueItemsForLeaf(leaf: SplitPaneTree): QueueItemDto[] {
   return (messages.queueItemIdsByThreadId[thread.id] ?? [])
     .map((id) => messages.queueItemsById[id])
     .filter((item) => item !== undefined);
+}
+
+function readyPulseKeyForLeaf(leaf: SplitPaneTree): number {
+  const thread = threadForLeaf(leaf);
+  return thread === null ? 0 : (threadReady.pulseKeyByThreadId[thread.id] ?? 0);
 }
 
 function draftForLeaf(leaf: SplitPaneTree): string {
@@ -576,6 +605,7 @@ async function restoreThread(threadId: string): Promise<void> {
     threads.rememberOpenThread(thread);
   }
   await Promise.all([messages.load(thread.id), messages.loadQueue(thread.id)]);
+  threadReady.prime(thread.id);
 }
 
 async function switchLeafThread(leaf: SplitPaneTree, threadId: string): Promise<void> {
@@ -754,4 +784,24 @@ function buildLinearThreadTree(leaves: readonly SplitPaneLeaf[]): SplitPaneTree 
 }
 </script>
 
+<style scoped>
+.tools-grid {
+  display: grid;
+  gap: 0.85rem;
+}
 
+.tool-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0.8rem 0.95rem;
+  border: 1px solid var(--border-list);
+  border-radius: 0.9rem;
+  background: var(--bg-row-subtle);
+}
+
+.tool-card-name {
+  font-weight: 700;
+}
+</style>

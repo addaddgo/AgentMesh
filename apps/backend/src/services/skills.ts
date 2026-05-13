@@ -46,7 +46,11 @@ export class SkillService {
   ) {}
 
   public list(): SkillDto[] {
-    return this.scanSkills().map(({ name, description }) => ({ name, description }));
+    return this.scanSkills().map(({ name, description, path: skillPath }) =>
+      skillPath === undefined
+        ? { name, description }
+        : { name, description, path: skillPath }
+    );
   }
 
   public sync(input: {
@@ -133,10 +137,17 @@ export class SkillService {
   }
 
   private scanSkills(): SkillRecord[] {
+    const skills = this.scanSkillsUnder("");
+
+    return skills.sort((left, right) => (left.path ?? left.name).localeCompare(right.path ?? right.name));
+  }
+
+  private scanSkillsUnder(relativeDirectory: string): SkillRecord[] {
+    const directory = path.join(this.config.skillsRoot, relativeDirectory);
     let entries: fs.Dirent[];
 
     try {
-      entries = fs.readdirSync(this.config.skillsRoot, { withFileTypes: true });
+      entries = fs.readdirSync(directory, { withFileTypes: true });
     } catch (error) {
       if (isNotFound(error)) {
         return [];
@@ -145,20 +156,33 @@ export class SkillService {
       throw new FilesystemError(errorMessage(error));
     }
 
-    const skills = entries
-      .filter((entry) => entry.isDirectory())
-      .flatMap((entry) => this.readSkill(entry.name));
+    const skills: SkillRecord[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
 
-    return skills.sort((left, right) => left.name.localeCompare(right.name));
+      assertSafePathSegment(entry.name, "skillDirectory", "Skill directory is invalid");
+      const entryPath =
+        relativeDirectory.length === 0 ? entry.name : path.posix.join(relativeDirectory, entry.name);
+      const skill = this.readSkill(entryPath);
+      if (skill !== null) {
+        skills.push(skill);
+        continue;
+      }
+
+      skills.push(...this.scanSkillsUnder(entryPath));
+    }
+
+    return skills;
   }
 
-  private readSkill(directoryName: string): SkillRecord[] {
-    assertSafePathSegment(directoryName, "skillDirectory", "Skill directory is invalid");
-    const sourcePath = path.join(this.config.skillsRoot, directoryName);
+  private readSkill(skillPath: string): SkillRecord | null {
+    const sourcePath = path.join(this.config.skillsRoot, skillPath);
     const skillFile = path.join(sourcePath, "SKILL.md");
 
-    if (!isImmediateChild(this.config.skillsRoot, sourcePath) || !fs.existsSync(skillFile)) {
-      return [];
+    if (!isPathInside(this.config.skillsRoot, sourcePath) || !fs.existsSync(skillFile)) {
+      return null;
     }
 
     let markdown: string;
@@ -170,15 +194,14 @@ export class SkillService {
     }
 
     const frontMatter = parseFrontMatter(markdown);
-    const name = normalizeSkillName(frontMatter.name, directoryName);
+    const name = normalizeSkillName(frontMatter.name, path.posix.basename(skillPath));
 
-    return [
-      {
-        name,
-        description: frontMatter.description ?? "",
-        sourcePath
-      }
-    ];
+    return {
+      name,
+      description: frontMatter.description ?? "",
+      path: skillPath,
+      sourcePath
+    };
   }
 
   private skillsByName(): Map<string, SkillRecord> {
@@ -486,7 +509,7 @@ function unquoteYamlString(value: string): string {
   return value;
 }
 
-function isImmediateChild(root: string, child: string): boolean {
+function isPathInside(root: string, child: string): boolean {
   const relative = path.relative(root, child);
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }

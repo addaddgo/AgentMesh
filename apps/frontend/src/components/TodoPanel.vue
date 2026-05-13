@@ -106,14 +106,36 @@
         </div>
 
         <div class="todo-meta">
+          <el-autocomplete
+            v-if="editingId === item.id && editingField === 'category'"
+            v-model="editValue"
+            size="small"
+            class="todo-category-input todo-category-inline-input"
+            placeholder="Category"
+            :fetch-suggestions="fetchCategorySuggestions"
+            :trigger-on-focus="true"
+            clearable
+            @select="commitEdit(item)"
+            @blur="commitEdit(item)"
+            @keyup.enter="commitEdit(item)"
+            @keyup.escape="cancelEdit"
+          />
           <el-tag
-            v-if="item.category"
+            v-else-if="item.category"
             size="small"
             class="todo-category-tag"
-            @click.stop="startEditCategory(item)"
+            @click.stop="startEdit(item, 'category')"
           >
             {{ item.category }}
           </el-tag>
+          <button
+            v-else
+            type="button"
+            class="todo-category-add"
+            @click.stop="startEdit(item, 'category')"
+          >
+            Add category
+          </button>
           <el-date-picker
             v-model="datePickerValue[item.id]"
             type="date"
@@ -150,11 +172,14 @@
           size="small"
           placeholder="Add todo…"
         />
-        <el-input
+        <el-autocomplete
           v-model="newCategory"
           size="small"
           placeholder="Category (optional)"
           class="todo-category-input"
+          :fetch-suggestions="fetchCategorySuggestions"
+          :trigger-on-focus="true"
+          clearable
         />
       </div>
       <div class="todo-add-row-desc">
@@ -196,7 +221,7 @@ const newName = ref("");
 const newDescription = ref("");
 const newCategory = ref("");
 const editingId = ref<string | null>(null);
-const editingField = ref<"name" | "description" | null>(null);
+const editingField = ref<"name" | "description" | "category" | null>(null);
 const editValue = ref("");
 const expandedIds = ref(new Set<string>());
 const expandedGroupNames = ref(new Set<string>(["Uncategorized"]));
@@ -276,14 +301,38 @@ store.$subscribe((_mutation, _state) => {
   }
 });
 
-function startEdit(item: TodoItemDto, field: "name" | "description"): void {
+function normalizeCategory(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function fetchCategorySuggestions(
+  queryString: string,
+  callback: (results: Array<{ value: string }>) => void
+): void {
+  const query = queryString.trim().toLowerCase();
+  const results = store.categories
+    .filter((category) => query.length === 0 || category.toLowerCase().includes(query))
+    .map((category) => ({ value: category }));
+  callback(results);
+}
+
+function startEdit(item: TodoItemDto, field: "name" | "description" | "category"): void {
   if (item.done) {
     return;
   }
 
   editingId.value = item.id;
   editingField.value = field;
-  editValue.value = field === "name" ? item.name : item.description;
+  if (field === "name") {
+    editValue.value = item.name;
+    return;
+  }
+  if (field === "description") {
+    editValue.value = item.description;
+    return;
+  }
+  editValue.value = item.category ?? "";
 }
 
 function commitEdit(item: TodoItemDto): void {
@@ -291,14 +340,22 @@ function commitEdit(item: TodoItemDto): void {
     return;
   }
 
+  if (editingField.value === "category") {
+    const nextCategory = normalizeCategory(editValue.value);
+    if (nextCategory !== (item.category ?? null)) {
+      void store.update(item.id, { category: nextCategory });
+    }
+    cancelEdit();
+    return;
+  }
+
   const trimmed = editValue.value.trim();
-  if (trimmed.length > 0 && trimmed !== (editingField.value === "name" ? item.name : item.description)) {
+  const currentValue = editingField.value === "name" ? item.name : item.description;
+  if (trimmed.length > 0 && trimmed !== currentValue) {
     void store.update(item.id, { [editingField.value]: trimmed });
   }
 
-  editingId.value = null;
-  editingField.value = null;
-  editValue.value = "";
+  cancelEdit();
 }
 
 function cancelEdit(): void {
@@ -309,13 +366,6 @@ function cancelEdit(): void {
 
 async function toggleDone(item: TodoItemDto): Promise<void> {
   await store.update(item.id, { done: !item.done });
-}
-
-function startEditCategory(item: TodoItemDto): void {
-  const next = prompt("Edit category:", item.category ?? "");
-  if (next !== null && next.trim() !== item.category) {
-    void store.update(item.id, { category: next.trim() || null });
-  }
 }
 
 async function setDueDate(item: TodoItemDto, value: number | null): Promise<void> {
@@ -329,7 +379,7 @@ async function addTodo(): Promise<void> {
   }
 
   const description = newDescription.value.trim() || null;
-  const category = newCategory.value.trim() || null;
+  const category = normalizeCategory(newCategory.value);
   await store.create({ name, description: description || undefined, category });
   newName.value = "";
   newDescription.value = "";
@@ -420,10 +470,10 @@ async function onDrop(event: DragEvent): Promise<void> {
   padding: 0.75rem;
   border: 1px solid var(--line);
   border-radius: 1.15rem;
-  background: #f5f5f0;
+  background: var(--bg-panel-soft);
   box-shadow:
     0 18px 46px var(--warm-shadow),
-    0 1px 0 rgba(255, 255, 255, 0.85) inset;
+    0 1px 0 color-mix(in srgb, var(--warm-white) 85%, transparent) inset;
   overflow: hidden;
 }
 
@@ -435,7 +485,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   padding: 0.62rem 0.75rem;
   border-bottom: 1px solid var(--line);
   border-radius: 1.15rem 1.15rem 0 0;
-  background: #d4edda;
+  background: var(--bg-tool-header);
 }
 
 .todo-header h2 {
@@ -463,9 +513,9 @@ async function onDrop(event: DragEvent): Promise<void> {
   align-items: flex-start;
   gap: 0.5rem;
   padding: 0.5rem;
-  border: 1px solid #c0c0c0;
+  border: 1px solid var(--border-list);
   border-radius: 0.75rem;
-  background: rgba(255, 253, 244, 0.72);
+  background: var(--bg-row-subtle);
   cursor: grab;
   transition:
     border-color 120ms ease,
@@ -499,7 +549,7 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 
 .todo-name.is-editable:hover {
-  background: rgba(216, 154, 24, 0.08);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
   border-radius: 0.3rem;
 }
 
@@ -536,13 +586,13 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 
 .todo-description:hover {
-  background: rgba(216, 154, 24, 0.08);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
   border-radius: 0.3rem;
 }
 
 .todo-description-placeholder {
   font-size: 0.95rem;
-  color: var(--ink-placeholder, #bbb);
+  color: var(--text-placeholder);
   font-style: italic;
 }
 
@@ -604,6 +654,10 @@ async function onDrop(event: DragEvent): Promise<void> {
   flex-shrink: 0;
 }
 
+.todo-category-inline-input {
+  width: 116px;
+}
+
 .todo-description-input {
   flex-shrink: 0;
 }
@@ -616,28 +670,43 @@ async function onDrop(event: DragEvent): Promise<void> {
   font-size: 0.85rem;
 }
 
+.todo-category-add {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.todo-category-add:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .todo-group-header {
   display: flex;
   align-items: center;
   gap: 0.35rem;
   font-size: 0.78rem;
   font-weight: 700;
-  color: var(--ink-soft, #888);
+  color: var(--ink-soft);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 0.35rem 0.25rem;
   margin-top: 0.15rem;
-  border-bottom: 1px solid var(--line-subtle, #eee);
+  border-bottom: 1px solid var(--line-subtle);
   position: sticky;
   top: 0;
-  background: #f5f5f0;
+  background: var(--bg-panel-soft);
   z-index: 1;
   cursor: pointer;
   user-select: none;
 }
 
 .todo-group-header:hover {
-  background: rgba(216, 154, 24, 0.06);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
 }
 
 .todo-group-arrow {

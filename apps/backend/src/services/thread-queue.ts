@@ -111,6 +111,63 @@ export class ThreadQueueService {
     return rows.map(toDto);
   }
 
+  public getActiveForThread(threadId: string): QueueItemDto | null {
+    this.ensureThreadExists(threadId);
+
+    const row = this.database.sqlite
+      .prepare(
+        `
+          SELECT *
+          FROM queue_items
+          WHERE thread_id = ?
+            AND status IN (${ACTIVE_STATUSES.map(() => "?").join(", ")})
+          ORDER BY created_at ASC, rowid ASC
+          LIMIT 1
+        `
+      )
+      .get(threadId, ...ACTIVE_STATUSES) as QueueItemRow | undefined;
+
+    return row === undefined ? null : toDto(row);
+  }
+
+  public failPendingForThread(threadId: string, error: string): QueueItemDto[] {
+    this.ensureThreadExists(threadId);
+
+    const rows = this.database.sqlite
+      .prepare(
+        `
+          SELECT *
+          FROM queue_items
+          WHERE thread_id = ?
+            AND status = 'pending'
+          ORDER BY created_at ASC, rowid ASC
+        `
+      )
+      .all(threadId) as QueueItemRow[];
+
+    return rows.map((row) =>
+      this.updateItem(row.id, {
+        status: "failed",
+        result: null,
+        error
+      })
+    );
+  }
+
+  public failItem(id: string, error: string): QueueItemDto {
+    const current = this.get(id);
+
+    if (current.status === "completed" || current.status === "failed") {
+      return current;
+    }
+
+    return this.updateItem(id, {
+      status: "failed",
+      result: null,
+      error
+    });
+  }
+
   private scheduleThread(threadId: string): void {
     if (this.activeThreads.has(threadId)) {
       return;

@@ -16,7 +16,7 @@ type RegistryEntry = {
   readonly transport: CodexJsonRpcTransport;
   expectedStop: boolean;
   exitHandled: boolean;
-  healthCheckTimer?: ReturnType<typeof setInterval>;
+  healthCheckTimer: ReturnType<typeof setInterval> | undefined;
 };
 
 const HEALTH_CHECK_INTERVAL_MS = 1_000;
@@ -72,7 +72,8 @@ export class AppServerLifecycleRegistry {
       appServerId: id,
       transport,
       expectedStop: false,
-      exitHandled: false
+      exitHandled: false,
+      healthCheckTimer: undefined
     };
 
     this.entries.set(id, entry);

@@ -41,28 +41,46 @@
         />
 
         <el-empty v-if="skills.sourceSkills.length === 0" description="No skills found" />
-        <div v-else-if="filteredSkills.length === 0" class="selection-list-scroll">
+        <div v-else-if="filteredAvailableSkillRows.length === 0" class="selection-list-scroll">
           <el-empty description="No matching skills" />
         </div>
-        <div v-else class="selection-list selection-list-scroll">
+        <div v-else class="selection-list selection-list-scroll skill-tree-list">
           <button
-            v-for="skill in filteredSkills"
-            :key="skill.name"
+            v-for="row in filteredAvailableSkillRows"
+            :key="row.key"
             class="selection-card"
-            :class="{ active: skills.selectedSkillNames.includes(skill.name) }"
+            :class="[
+              `tree-depth-${row.depth}`,
+              row.type === 'directory'
+                ? ['tree-directory', { collapsed: row.collapsed }]
+                : ['tree-skill', { active: skills.selectedSkillPaths.includes(row.skillKey) }]
+            ]"
             type="button"
-            @click="toggleAvailableSkillDescription(skill.name)"
+            @click="
+              row.type === 'directory'
+                ? toggleAvailableDirectory(row.key)
+                : toggleAvailableSkillDescription(row.skillKey)
+            "
           >
-            <span class="selection-card-title">
-              <el-checkbox
-                :model-value="skills.selectedSkillNames.includes(skill.name)"
-                @click.stop
-                @change="skills.toggleSkill(skill.name)"
-              />
-              <strong>{{ skill.name }}</strong>
+            <span class="selection-card-title" v-if="row.type === 'directory'">
+              <strong>{{ row.collapsed ? '▸' : '▾' }} {{ row.label }}</strong>
             </span>
-            <small v-if="expandedAvailableSkillNames.has(skill.name)">
-              {{ skill.description || "No description" }}
+            <span class="selection-card-title" v-else>
+              <el-checkbox
+                :model-value="skills.selectedSkillPaths.includes(row.skillKey)"
+                @click.stop
+                @change="skills.toggleSkill(row.skillKey)"
+              />
+              <strong>{{ row.skill.name }}</strong>
+            </span>
+            <small v-if="row.type === 'skill'">{{ row.pathLabel }}</small>
+            <small
+              v-if="
+                row.type === 'skill' &&
+                expandedAvailableSkillKeys.has(row.skillKey)
+              "
+            >
+              {{ row.skill.description || "No description" }}
             </small>
           </button>
         </div>
@@ -185,7 +203,7 @@
 
 <script setup lang="ts">
 import { Connection, Delete, MagicStick, Refresh } from "@element-plus/icons-vue";
-import type { AppServerDto, AppServerStatus, TargetSkillDto } from "@agentmesh/shared";
+import type { AppServerDto, AppServerStatus, SkillDto, TargetSkillDto } from "@agentmesh/shared";
 import { computed, onMounted, ref } from "vue";
 
 import { apiClient } from "../api/client";
@@ -199,11 +217,38 @@ const skillSearch = ref("");
 const viewedAppServerId = ref<string | null>(null);
 const targetSkills = ref<readonly TargetSkillDto[]>([]);
 const targetSkillsLoading = ref(false);
-const expandedAvailableSkillNames = ref(new Set<string>());
+const expandedAvailableSkillKeys = ref(new Set<string>());
+const collapsedAvailableDirectoryKeys = ref(new Set<string>());
 const expandedTargetSkillNames = ref(new Set<string>());
 const viewedAppServerName = computed(() =>
   viewedAppServerId.value === null ? "No workspace selected" : appServerName(viewedAppServerId.value)
 );
+type AvailableDirectoryRow = {
+  readonly type: "directory";
+  readonly key: string;
+  readonly label: string;
+  readonly depth: number;
+  readonly collapsed: boolean;
+};
+
+type AvailableSkillRow = {
+  readonly type: "skill";
+  readonly key: string;
+  readonly skillKey: string;
+  readonly skill: SkillDto;
+  readonly depth: number;
+  readonly pathLabel: string;
+};
+
+type AvailableSkillRowItem = AvailableDirectoryRow | AvailableSkillRow;
+
+type AvailableDirectoryNode = {
+  readonly key: string;
+  readonly label: string;
+  readonly directories: Map<string, AvailableDirectoryNode>;
+  readonly skills: SkillDto[];
+};
+
 const filteredSkills = computed(() => {
   const query = skillSearch.value.trim().toLowerCase();
   if (query.length === 0) {
@@ -213,8 +258,16 @@ const filteredSkills = computed(() => {
   return skills.sourceSkills.filter(
     (skill) =>
       skill.name.toLowerCase().includes(query) ||
-      skill.description.toLowerCase().includes(query)
+      skill.description.toLowerCase().includes(query) ||
+      (skill.path ?? skill.name).toLowerCase().includes(query)
   );
+});
+const filteredAvailableSkillRows = computed<readonly AvailableSkillRowItem[]>(() => {
+  const query = skillSearch.value.trim();
+  return flattenAvailableSkillTree(buildAvailableSkillTree(filteredSkills.value), {
+    forceExpand: query.length > 0,
+    collapsedKeys: collapsedAvailableDirectoryKeys.value
+  });
 });
 
 onMounted(() => {
@@ -261,8 +314,15 @@ async function loadTargetSkills(): Promise<void> {
   }
 }
 
-function toggleAvailableSkillDescription(skillName: string): void {
-  expandedAvailableSkillNames.value = toggledSet(expandedAvailableSkillNames.value, skillName);
+function toggleAvailableSkillDescription(skillKey: string): void {
+  expandedAvailableSkillKeys.value = toggledSet(expandedAvailableSkillKeys.value, skillKey);
+}
+
+function toggleAvailableDirectory(directoryKey: string): void {
+  collapsedAvailableDirectoryKeys.value = toggledSet(
+    collapsedAvailableDirectoryKeys.value,
+    directoryKey
+  );
 }
 
 function toggleTargetSkillDescription(skillName: string): void {
@@ -321,4 +381,127 @@ function statusTagType(status: AppServerStatus): "success" | "warning" | "danger
       return "info";
   }
 }
+
+function availableSkillKey(skill: SkillDto): string {
+  return skill.path ?? skill.name;
+}
+
+function buildAvailableSkillTree(skillsList: readonly SkillDto[]): AvailableDirectoryNode {
+  const root: AvailableDirectoryNode = {
+    key: "",
+    label: "",
+    directories: new Map<string, AvailableDirectoryNode>(),
+    skills: []
+  };
+
+  for (const skill of skillsList) {
+    const skillPath = skill.path ?? skill.name;
+    const segments = skillPath.split("/").filter((segment) => segment.length > 0);
+    const directorySegments = segments.slice(0, -1);
+    let current = root;
+    let currentKey = "";
+
+    for (const segment of directorySegments) {
+      currentKey = currentKey.length === 0 ? segment : `${currentKey}/${segment}`;
+      let next = current.directories.get(segment);
+      if (next === undefined) {
+        next = {
+          key: currentKey,
+          label: segment,
+          directories: new Map<string, AvailableDirectoryNode>(),
+          skills: []
+        };
+        current.directories.set(segment, next);
+      }
+      current = next;
+    }
+
+    current.skills.push(skill);
+  }
+
+  return root;
+}
+
+function flattenAvailableSkillTree(
+  node: AvailableDirectoryNode,
+  options: {
+    readonly forceExpand: boolean;
+    readonly collapsedKeys: ReadonlySet<string>;
+  },
+  depth = 0
+): AvailableSkillRowItem[] {
+  const rows: AvailableSkillRowItem[] = [];
+  const directories = [...node.directories.values()].sort((left, right) =>
+    left.key.localeCompare(right.key)
+  );
+  const skillsList = [...node.skills].sort((left, right) =>
+    availableSkillKey(left).localeCompare(availableSkillKey(right))
+  );
+
+  for (const directory of directories) {
+    const collapsed = !options.forceExpand && options.collapsedKeys.has(directory.key);
+    rows.push({
+      type: "directory",
+      key: directory.key,
+      label: directory.label,
+      depth,
+      collapsed
+    });
+
+    if (!collapsed || options.forceExpand) {
+      rows.push(...flattenAvailableSkillTree(directory, options, depth + 1));
+    }
+  }
+
+  for (const skill of skillsList) {
+    const skillKey = availableSkillKey(skill);
+    rows.push({
+      type: "skill",
+      key: skillKey,
+      skillKey,
+      skill,
+      depth,
+      pathLabel: skill.path ?? skill.name
+    });
+  }
+
+  return rows;
+}
 </script>
+
+<style scoped>
+.skill-tree-list {
+  gap: 8px;
+}
+
+.tree-directory {
+  background: color-mix(in srgb, var(--bg-panel-elevated) 76%, var(--bg-panel-soft) 24%);
+  border-color: var(--border-list);
+}
+
+.tree-directory.collapsed {
+  opacity: 0.92;
+}
+
+.tree-skill small {
+  color: var(--text-secondary);
+}
+
+.tree-depth-0 {
+  margin-left: 0;
+}
+
+.tree-depth-1 {
+  margin-left: 14px;
+}
+
+.tree-depth-2 {
+  margin-left: 28px;
+}
+
+.tree-depth-3,
+.tree-depth-4,
+.tree-depth-5 {
+  margin-left: 42px;
+}
+</style>

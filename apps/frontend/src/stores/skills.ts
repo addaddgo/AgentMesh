@@ -6,7 +6,7 @@ import { notifyError } from "./errors";
 
 type SkillState = {
   sourceSkills: SkillDto[];
-  selectedSkillNames: string[];
+  selectedSkillPaths: string[];
   selectedAppServerIds: string[];
   syncResults: SkillSyncResultDto[];
   loading: boolean;
@@ -16,7 +16,7 @@ type SkillState = {
 export const useSkillStore = defineStore("skills", {
   state: (): SkillState => ({
     sourceSkills: [],
-    selectedSkillNames: [],
+    selectedSkillPaths: [],
     selectedAppServerIds: [],
     syncResults: [],
     loading: false,
@@ -26,7 +26,7 @@ export const useSkillStore = defineStore("skills", {
   getters: {
     canSync(state): boolean {
       return (
-        state.selectedSkillNames.length > 0 &&
+        state.selectedSkillPaths.length > 0 &&
         state.selectedAppServerIds.length > 0 &&
         !state.syncing
       );
@@ -38,9 +38,11 @@ export const useSkillStore = defineStore("skills", {
       this.loading = true;
       try {
         this.sourceSkills = [...(await apiClient.listSkills())];
-        const availableSkillNames = new Set(this.sourceSkills.map((skill) => skill.name));
-        this.selectedSkillNames = this.selectedSkillNames.filter((name) =>
-          availableSkillNames.has(name)
+        const availableSkillPaths = new Set(
+          this.sourceSkills.map((skill) => skill.path ?? skill.name)
+        );
+        this.selectedSkillPaths = this.selectedSkillPaths.filter((skillPath) =>
+          availableSkillPaths.has(skillPath)
         );
       } catch (error) {
         notifyError(error, "Failed to load skills");
@@ -49,16 +51,16 @@ export const useSkillStore = defineStore("skills", {
       }
     },
 
-    setSelectedSkillNames(names: readonly string[]): void {
-      this.selectedSkillNames = [...names];
+    setSelectedSkillPaths(paths: readonly string[]): void {
+      this.selectedSkillPaths = [...paths];
     },
 
     setSelectedAppServerIds(ids: readonly string[]): void {
       this.selectedAppServerIds = [...ids];
     },
 
-    toggleSkill(name: string): void {
-      this.selectedSkillNames = toggleValue(this.selectedSkillNames, name);
+    toggleSkill(skillPath: string): void {
+      this.selectedSkillPaths = toggleValue(this.selectedSkillPaths, skillPath);
     },
 
     toggleAppServer(id: string): void {
@@ -73,8 +75,11 @@ export const useSkillStore = defineStore("skills", {
       this.syncing = true;
       this.syncResults = [];
       try {
+        const skillNames = this.sourceSkills
+          .filter((skill) => this.selectedSkillPaths.includes(skill.path ?? skill.name))
+          .map((skill) => skill.name);
         const response = await apiClient.syncSkills({
-          skillNames: this.selectedSkillNames,
+          skillNames: [...new Set(skillNames)],
           appServerIds: this.selectedAppServerIds
         });
         this.syncResults = [...response.results];

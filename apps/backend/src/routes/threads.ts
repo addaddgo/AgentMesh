@@ -7,13 +7,15 @@ import type {
   ThreadDetailResponse,
   ThreadImportResponse,
   ThreadMessagesResponse,
-  ThreadQueueResponse
+  ThreadQueueResponse,
+  ThreadStopResponse
 } from "@agentmesh/shared";
 
 import { CodexEventService } from "../services/codex-events.js";
 import { RequestValidationError } from "../errors.js";
 import { ThreadImportService } from "../services/thread-import.js";
 import { ThreadQueueService } from "../services/thread-queue.js";
+import { ThreadStopService } from "../services/thread-stop.js";
 import { validateBody, validateParams, validateQuery } from "../validation.js";
 
 const threadParamsSchema = z.object({
@@ -41,6 +43,12 @@ export async function registerThreadRoutes(app: FastifyInstance): Promise<void> 
   const service = new ThreadImportService(app.database, app.events, app.threadStatusCache);
   const codexEvents = new CodexEventService(app.database);
   const queue = new ThreadQueueService(app.database, app.events);
+  const stopService = new ThreadStopService(
+    app.database,
+    app.events,
+    app.appServerLifecycle,
+    queue
+  );
 
   app.get(
     "/api/threads/:threadId",
@@ -66,6 +74,15 @@ export async function registerThreadRoutes(app: FastifyInstance): Promise<void> 
     async (request): Promise<ThreadQueueResponse> => {
       const { threadId } = request.params as z.infer<typeof threadParamsSchema>;
       return { items: queue.listForThread(threadId) };
+    }
+  );
+
+  app.post(
+    "/api/threads/:threadId/stop",
+    { preHandler: validateParams(threadParamsSchema) },
+    async (request): Promise<ThreadStopResponse> => {
+      const { threadId } = request.params as z.infer<typeof threadParamsSchema>;
+      return stopService.stop(threadId);
     }
   );
 

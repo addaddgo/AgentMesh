@@ -1,5 +1,13 @@
 <template>
-  <section class="thread-panel" :class="{ focused, missing: thread === null }">
+  <section
+    class="thread-panel"
+    :class="{
+      focused,
+      missing: thread === null,
+      'ready-pulse': readyPulseActive,
+      'user-messages-hidden': !showUserMessages
+    }"
+  >
     <template v-if="thread !== null">
       <header class="thread-header">
         <div class="thread-header-main">
@@ -17,6 +25,10 @@
           <span class="thread-param">perm: {{ threadPermissionMode }}</span>
         </div>
         <div class="thread-header-actions">
+          <div class="thread-visibility-toggle">
+            <span>user</span>
+            <el-switch v-model="showUserMessages" size="small" />
+          </div>
           <el-button
             v-if="canRenameThread"
             size="small"
@@ -76,15 +88,25 @@
         />
       </el-dialog>
 
-      <div ref="scrollContainer" class="message-list">
+      <div ref="scrollContainer" class="message-list" @click="handleMessageListClick">
         <article
-          v-for="(message, index) in messages"
+          v-for="(message, index) in displayedMessages"
           :key="message.id"
           class="message-card"
           :class="message.role"
-          :draggable="canDragMessage(message)"
-          @dragstart="dragMessage($event, message)"
         >
+          <div v-if="canDragMessage(message)" class="message-actions">
+            <button
+              class="message-drag-handle"
+              type="button"
+              draggable="true"
+              title="Drag message text"
+              aria-label="Drag message text"
+              @dragstart="dragMessage($event, message)"
+            >
+              <el-icon><Rank /></el-icon>
+            </button>
+          </div>
           <div v-if="message.status !== 'completed'" class="message-meta">
             <el-tag size="small">{{ message.status }}</el-tag>
           </div>
@@ -174,7 +196,7 @@
           <footer v-if="message.role === 'assistant'" class="message-time">
             <span>{{ formatMessageTime(message.createdAt) }}</span>
             <span>{{
-              formatMessageDelta(messages[index - 1]?.createdAt ?? null, message.createdAt)
+              formatMessageDelta(displayedMessages[index - 1]?.createdAt ?? null, message.createdAt)
             }}</span>
           </footer>
         </article>
@@ -182,12 +204,55 @@
 
       <div
         class="composer"
-        :class="{ 'drop-target': isDropTarget }"
+        :class="{ 'drop-target': isDropTarget, 'search-open': fileSearchOpen }"
         @dragenter.prevent="dragEnterComposer($event)"
         @dragover.prevent="dragOverComposer($event)"
         @dragleave="dragLeaveComposer"
         @drop.prevent="dropIntoComposer($event)"
       >
+        <div v-if="fileSearchOpen" class="workspace-search-overlay">
+          <div class="workspace-search-panel">
+            <div class="workspace-search-header">
+              <span>Workspace File Search</span>
+              <span>{{ props.appServer?.name ?? "workspace" }}</span>
+            </div>
+            <input
+              ref="fileSearchInput"
+              v-model="fileSearchQuery"
+              class="workspace-search-input"
+              type="text"
+              placeholder="Search files in this workspace"
+              spellcheck="false"
+              autocomplete="off"
+              @keydown="handleFileSearchKeydown"
+            />
+            <div class="workspace-search-results">
+              <p v-if="fileSearchLoading" class="workspace-search-hint">Searching...</p>
+              <p
+                v-else-if="fileSearchResults.length === 0"
+                class="workspace-search-hint workspace-search-empty"
+              >
+                {{ fileSearchEmptyState }}
+              </p>
+              <button
+                v-for="(entry, index) in fileSearchResults"
+                :key="entry.path"
+                type="button"
+                class="workspace-search-result"
+                :class="{
+                  selected: index === fileSearchSelectedIndex,
+                  directory: entry.kind === 'directory'
+                }"
+                @mousedown.prevent
+                @click="void openWorkspaceFileFromSearch(entry)"
+              >
+                <strong>{{ formatFileSearchEntryLabel(entry) }}</strong>
+                <span>{{ entry.path }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div
           ref="editorHost"
           class="markdown-editor"
@@ -232,6 +297,33 @@
             }}
           </span>
           <div class="composer-button-group">
+            <el-button
+              :icon="ArrowUp"
+              :disabled="!canBrowseHistoryUp"
+              circle
+              title="Previous input"
+              aria-label="Previous input"
+              @click="browseComposerHistory(-1)"
+            />
+            <el-button
+              :icon="ArrowDown"
+              :disabled="!canBrowseHistoryDown"
+              circle
+              title="Next input"
+              aria-label="Next input"
+              @click="browseComposerHistory(1)"
+            />
+            <el-button
+              v-if="isWorking"
+              type="warning"
+              :icon="VideoPause"
+              :loading="stopping"
+              :disabled="!canStop"
+              circle
+              title="Stop agent"
+              aria-label="Stop agent"
+              @click="void stopThreadWork()"
+            />
             <el-button
               :disabled="!canEdit || attachments.length >= MAX_ATTACHMENTS"
               :loading="uploading"
@@ -295,6 +387,8 @@
 
 <script setup lang="ts">
 import {
+  ArrowDown,
+  ArrowUp,
   Check,
   CloseBold,
   Delete,
@@ -302,7 +396,9 @@ import {
   EditPen,
   PictureFilled,
   Promotion,
-  SwitchButton
+  Rank,
+  SwitchButton,
+  VideoPause
 } from "@element-plus/icons-vue";
 import type {
   AppServerDto,
@@ -350,12 +446,35 @@ import {
 const MAX_ATTACHMENTS = 5;
 const LOCAL_DRAFT_PROTECTION_MS = 5000;
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const WORKSPACE_LINK_PREFIX = "workspace:";
+const WORKSPACE_PATH_PATTERN =
+  /(^|[\s(>])((?:\.{1,2}\/)?(?:[\w.-]+\/)+[\w./-]*[\w-]+\.[A-Za-z0-9._-]+)(?=$|[\s),.:;!?<])/gmu;
 const markdownRenderer = new MarkdownIt({ html: false, linkify: true });
+const defaultLinkOpen =
+  markdownRenderer.renderer.rules.link_open ??
+  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+
+markdownRenderer.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+  if (token === undefined) {
+    return defaultLinkOpen(tokens, idx, options, env, self);
+  }
+  const href = token?.attrGet("href") ?? "";
+  if (href.startsWith(WORKSPACE_LINK_PREFIX)) {
+    token.attrSet("href", "#");
+    token.attrSet("data-workspace-path", decodeURIComponent(href.slice(WORKSPACE_LINK_PREFIX.length)));
+    token.attrJoin("class", "workspace-inline-link");
+  }
+
+  return defaultLinkOpen(tokens, idx, options, env, self);
+};
 
 type SelectedAttachment = {
   readonly attachment: ImageAttachmentDto;
   readonly previewUrl: string;
 };
+
+type FileSearchResult = WorkspaceEntryDto;
 
 const props = defineProps<{
   readonly appServer: AppServerDto | null;
@@ -365,6 +484,7 @@ const props = defineProps<{
   readonly draft: string;
   readonly focused: boolean;
   readonly resuming?: boolean;
+  readonly readyPulseKey?: number;
 }>();
 
 const emit = defineEmits<{
@@ -389,11 +509,13 @@ const approvals = useApprovalStore();
 const scrollContainer = ref<HTMLElement | null>(null);
 const editorHost = ref<HTMLElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+const fileSearchInput = ref<HTMLInputElement | null>(null);
 const debugDrawerOpen = ref(false);
 const rawEvents = ref<readonly CodexEventDto[]>([]);
 const rawEventsLoading = ref(false);
 const attachments = ref<SelectedAttachment[]>([]);
 const uploading = ref(false);
+const stopping = ref(false);
 const isDropTarget = ref(false);
 const renameDialogOpen = ref(false);
 const approvalVisible = ref(false);
@@ -401,14 +523,27 @@ const renameDraft = ref("");
 const dismissedApprovalIds = ref(new Set<string>());
 const renaming = ref(false);
 const editorDraft = ref(props.draft);
+const fileSearchOpen = ref(false);
+const fileSearchQuery = ref("");
+const fileSearchLoading = ref(false);
+const fileSearchResults = ref<readonly FileSearchResult[]>([]);
+const fileSearchSelectedIndex = ref(0);
+const readyPulseActive = ref(false);
+const historyBrowseIndex = ref(-1);
+const showUserMessages = ref(false);
 const editableCompartment = new Compartment();
 let editorView: EditorView | null = null;
 let saveDraftTimer: ReturnType<typeof setTimeout> | null = null;
+let fileSearchTimer: ReturnType<typeof setTimeout> | null = null;
+let readyPulseTimer: ReturnType<typeof setTimeout> | null = null;
+let fileSearchRequestToken = 0;
 let dragDepth = 0;
 let activeEditorThreadId: string | null = props.thread?.id ?? null;
 let lastLocalDraft = props.draft;
 let lastLocalEditAt = 0;
 let applyingExternalDraft = false;
+let historyInsertionAnchor = -1;
+let historyInsertedRange: { from: number; to: number } | null = null;
 const commandCompletionCache = new Map<string, readonly CodexCommandDto[]>();
 const skillCompletionCache = new Map<string, readonly SkillDto[]>();
 const commandOptionCompletionCache = new Map<string, readonly CodexCommandOptionDto[]>();
@@ -432,6 +567,23 @@ const canSend = computed(
     canEdit.value &&
     !uploading.value &&
     (editorDraft.value.trim().length > 0 || attachments.value.length > 0)
+);
+const canStop = computed(() => props.thread !== null && isWorking.value && !stopping.value);
+const composerHistory = computed(() =>
+  [...props.messages]
+    .filter((message) => message.role === "user")
+    .map(userMessageHistoryText)
+    .filter((text) => text.length > 0)
+    .reverse()
+);
+const canBrowseHistoryUp = computed(
+  () => canEdit.value && historyBrowseIndex.value < composerHistory.value.length - 1
+);
+const canBrowseHistoryDown = computed(() => canEdit.value && historyBrowseIndex.value >= 0);
+const displayedMessages = computed(() =>
+  showUserMessages.value
+    ? props.messages
+    : props.messages.filter((message) => message.role !== "user")
 );
 const pendingApproval = computed<ApprovalDto | null>(() => {
   if (props.thread === null) {
@@ -535,9 +687,26 @@ const resumeActionDisabled = computed(
 const resumeActionLabel = computed(() =>
   props.appServer?.status === "online" ? "Resume thread" : "Start app-server and resume thread"
 );
+const fileSearchEmptyState = computed(() => {
+  const query = fileSearchQuery.value.trim();
+  if (query.length === 0) {
+    return "No top-level directories";
+  }
+  if (query.endsWith("/")) {
+    return "No entries in this directory";
+  }
+  return "No matching files";
+});
+const selectedFileSearchResult = computed<FileSearchResult | null>(
+  () => fileSearchResults.value[fileSearchSelectedIndex.value] ?? null
+);
 watch(
   () => props.messages.length,
-  async () => {
+  async (nextLength, previousLength) => {
+    if (nextLength <= previousLength) {
+      return;
+    }
+
     await nextTick();
     if (scrollContainer.value !== null) {
       scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight;
@@ -568,12 +737,19 @@ onMounted(() => {
       Prec.high(
         keymap.of([
           {
+            key: "Mod-f",
+            run: () => {
+              openFileSearch();
+              return true;
+            }
+          },
+          {
             key: "ArrowDown",
-            run: moveCompletionSelection(true)
+            run: (view) => moveCompletionSelection(true)(view) || browseComposerHistoryWithKeyboard(view, 1)
           },
           {
             key: "ArrowUp",
-            run: moveCompletionSelection(false)
+            run: (view) => moveCompletionSelection(false)(view) || browseComposerHistoryWithKeyboard(view, -1)
           },
           {
             key: "PageDown",
@@ -585,7 +761,20 @@ onMounted(() => {
           },
           {
             key: "Escape",
-            run: closeCompletion
+            run: (view) => {
+              if (fileSearchOpen.value) {
+                closeFileSearch();
+                return true;
+              }
+              if (closeCompletion(view)) {
+                return true;
+              }
+              if (canStop.value) {
+                void stopThreadWork();
+                return true;
+              }
+              return false;
+            }
           },
           {
             key: "Enter",
@@ -617,6 +806,11 @@ onMounted(() => {
           return;
         }
 
+        if (historyBrowseIndex.value !== -1) {
+          historyBrowseIndex.value = -1;
+          historyInsertionAnchor = -1;
+          historyInsertedRange = null;
+        }
         setLocalDraft(update.state.doc.toString(), true);
         scheduleDraftSave();
       })
@@ -627,6 +821,12 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (saveDraftTimer !== null) {
     clearTimeout(saveDraftTimer);
+  }
+  if (fileSearchTimer !== null) {
+    clearTimeout(fileSearchTimer);
+  }
+  if (readyPulseTimer !== null) {
+    clearTimeout(readyPulseTimer);
   }
   for (const item of attachments.value) {
     URL.revokeObjectURL(item.previewUrl);
@@ -645,6 +845,9 @@ watch(
     activeEditorThreadId = threadId;
 
     if (threadChanged) {
+      historyBrowseIndex.value = -1;
+      historyInsertionAnchor = -1;
+      historyInsertedRange = null;
       replaceEditorDraft(nextDraft);
       return;
     }
@@ -669,9 +872,94 @@ watch(canEdit, (editable) => {
 });
 
 watch(
+  () => props.readyPulseKey ?? 0,
+  (next, previous) => {
+    if (next === 0 || next === previous) {
+      return;
+    }
+
+    readyPulseActive.value = true;
+    if (readyPulseTimer !== null) {
+      clearTimeout(readyPulseTimer);
+    }
+    readyPulseTimer = setTimeout(() => {
+      readyPulseActive.value = false;
+      readyPulseTimer = null;
+    }, 1800);
+  }
+);
+
+watch(
+  () => fileSearchResults.value.length,
+  (length) => {
+    if (length === 0) {
+      fileSearchSelectedIndex.value = 0;
+      return;
+    }
+
+    fileSearchSelectedIndex.value = Math.min(fileSearchSelectedIndex.value, length - 1);
+  }
+);
+
+watch(
+  () => [fileSearchOpen.value, fileSearchQuery.value, props.appServer?.id ?? null] as const,
+  ([open, query, appServerId]) => {
+    if (!open || appServerId === null) {
+      cancelFileSearchRequest();
+      fileSearchLoading.value = false;
+      fileSearchResults.value = [];
+      return;
+    }
+
+    if (fileSearchTimer !== null) {
+      clearTimeout(fileSearchTimer);
+    }
+
+    fileSearchLoading.value = true;
+    const requestToken = ++fileSearchRequestToken;
+    const normalizedQuery = query.trim();
+    fileSearchTimer = setTimeout(() => {
+      const request =
+        normalizedQuery.length === 0 || normalizedQuery.endsWith("/")
+          ? apiClient.listWorkspaceEntries(appServerId, normalizedQuery)
+          : apiClient.searchWorkspaceFiles(appServerId, normalizedQuery);
+
+      void request
+        .then((entries) => {
+          if (requestToken !== fileSearchRequestToken) {
+            return;
+          }
+
+          fileSearchResults.value =
+            normalizedQuery.length === 0
+              ? entries.filter((entry) => entry.kind === "directory")
+              : normalizedQuery.endsWith("/")
+                ? entries
+                : rankWorkspaceSearchResults(entries, normalizedQuery);
+          fileSearchSelectedIndex.value = 0;
+        })
+        .catch((error: unknown) => {
+          if (requestToken !== fileSearchRequestToken) {
+            return;
+          }
+
+          fileSearchResults.value = [];
+          notifyError(error, "Failed to search workspace files");
+        })
+        .finally(() => {
+          if (requestToken === fileSearchRequestToken) {
+            fileSearchLoading.value = false;
+          }
+        });
+    }, 120);
+  }
+);
+
+watch(
   () => props.thread?.id,
   (threadId) => {
     clearAttachments();
+    closeFileSearch({ restoreFocus: false });
     if (threadId !== undefined) {
       void approvals.loadForThread(threadId);
     }
@@ -1079,14 +1367,103 @@ function removeAttachment(id: string): void {
 }
 
 function sendComposer(): void {
+  if (fileSearchOpen.value) {
+    return;
+  }
+
   emit("send", {
     draftMarkdown: currentEditorText(),
     attachmentIds: attachments.value.map((item) => item.attachment.id),
     onSuccess: () => {
       replaceEditorDraft("");
+      historyBrowseIndex.value = -1;
+      historyInsertionAnchor = -1;
+      historyInsertedRange = null;
       clearAttachments();
     }
   });
+}
+
+function browseComposerHistory(direction: -1 | 1): void {
+  if (editorView === null) {
+    return;
+  }
+
+  browseComposerHistoryInternal(editorView, direction);
+}
+
+function browseComposerHistoryWithKeyboard(view: EditorView, direction: -1 | 1): boolean {
+  if (!view.state.selection.main.empty) {
+    return false;
+  }
+
+  return browseComposerHistoryInternal(view, direction);
+}
+
+function browseComposerHistoryInternal(view: EditorView, direction: -1 | 1): boolean {
+  const history = composerHistory.value;
+  if (history.length === 0) {
+    return false;
+  }
+
+  if (direction === -1) {
+    if (historyBrowseIndex.value >= history.length - 1) {
+      return false;
+    }
+    if (historyBrowseIndex.value === -1) {
+      historyInsertionAnchor = view.state.selection.main.head;
+      historyInsertedRange = {
+        from: historyInsertionAnchor,
+        to: historyInsertionAnchor
+      };
+    }
+    historyBrowseIndex.value += 1;
+    applyHistoryInsertion(view, history[historyBrowseIndex.value] ?? "");
+    return true;
+  }
+
+  if (historyBrowseIndex.value === -1) {
+    return false;
+  }
+  if (historyBrowseIndex.value === 0) {
+    historyBrowseIndex.value = -1;
+    applyHistoryInsertion(view, "");
+    historyInsertionAnchor = -1;
+    historyInsertedRange = null;
+    return true;
+  }
+
+  historyBrowseIndex.value -= 1;
+  applyHistoryInsertion(view, history[historyBrowseIndex.value] ?? "");
+  return true;
+}
+
+function applyHistoryInsertion(view: EditorView, text: string): void {
+  if (historyInsertionAnchor < 0) {
+    return;
+  }
+
+  const range = historyInsertedRange ?? {
+    from: historyInsertionAnchor,
+    to: historyInsertionAnchor
+  };
+  const insert = text.length === 0 ? "" : `${text}\n`;
+  const nextHead = range.from + insert.length;
+
+  applyingExternalDraft = true;
+  view.dispatch({
+    changes: { from: range.from, to: range.to, insert },
+    selection: { anchor: nextHead }
+  });
+  applyingExternalDraft = false;
+
+  historyInsertedRange = {
+    from: range.from,
+    to: range.from + insert.length
+  };
+  setLocalDraft(view.state.doc.toString());
+  scheduleDraftSave();
+  void nextTick(() => view.focus());
 }
 
 function replaceEditorDraft(nextDraft: string, markUserEdit = false): void {
@@ -1140,6 +1517,125 @@ function saveDraftNow(): void {
     saveDraftTimer = null;
   }
   emit("save-draft");
+}
+
+function openFileSearch(): void {
+  if (props.appServer === null) {
+    notifyInfo("Open a thread with a workspace before searching files", "Workspace unavailable");
+    return;
+  }
+
+  if (fileSearchOpen.value) {
+    focusFileSearchInput(true);
+    return;
+  }
+
+  fileSearchOpen.value = true;
+  fileSearchLoading.value = false;
+  fileSearchResults.value = [];
+  fileSearchSelectedIndex.value = 0;
+  void nextTick(() => focusFileSearchInput(fileSearchQuery.value.length > 0));
+}
+
+function closeFileSearch(options: { readonly restoreFocus?: boolean } = {}): void {
+  cancelFileSearchRequest();
+  fileSearchOpen.value = false;
+  fileSearchLoading.value = false;
+  fileSearchQuery.value = "";
+  fileSearchResults.value = [];
+  fileSearchSelectedIndex.value = 0;
+
+  if (options.restoreFocus !== false) {
+    void nextTick(() => {
+      editorView?.focus();
+    });
+  }
+}
+
+function cancelFileSearchRequest(): void {
+  fileSearchRequestToken += 1;
+  if (fileSearchTimer !== null) {
+    clearTimeout(fileSearchTimer);
+    fileSearchTimer = null;
+  }
+}
+
+function focusFileSearchInput(selectAll: boolean): void {
+  const input = fileSearchInput.value;
+  if (input === null) {
+    return;
+  }
+
+  input.focus();
+  if (selectAll) {
+    input.setSelectionRange(0, input.value.length);
+  }
+}
+
+function handleFileSearchKeydown(event: KeyboardEvent): void {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+    event.preventDefault();
+    focusFileSearchInput(true);
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeFileSearch();
+    return;
+  }
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    moveFileSearchSelection(1);
+    return;
+  }
+
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    moveFileSearchSelection(-1);
+    return;
+  }
+
+  if (event.key === "Enter") {
+    event.preventDefault();
+    const entry = selectedFileSearchResult.value;
+    if (entry !== null) {
+      void openWorkspaceFileFromSearch(entry);
+    }
+  }
+}
+
+function moveFileSearchSelection(delta: number): void {
+  if (fileSearchResults.value.length === 0) {
+    return;
+  }
+
+  const nextIndex =
+    (fileSearchSelectedIndex.value + delta + fileSearchResults.value.length) %
+    fileSearchResults.value.length;
+  fileSearchSelectedIndex.value = nextIndex;
+}
+
+async function openWorkspaceFileFromSearch(entry: FileSearchResult): Promise<void> {
+  if (entry.kind === "directory") {
+    fileSearchQuery.value = entry.path;
+    fileSearchSelectedIndex.value = 0;
+    void nextTick(() => focusFileSearchInput(false));
+    return;
+  }
+
+  const appServerId = props.appServer?.id;
+  if (appServerId === undefined) {
+    return;
+  }
+
+  try {
+    await apiClient.openWorkspaceFileInVscode(appServerId, { path: entry.path });
+    closeFileSearch();
+  } catch (error) {
+    notifyError(error, "Failed to open file in VS Code");
+  }
 }
 
 async function openDebugDrawer(): Promise<void> {
@@ -1196,12 +1692,100 @@ async function renameThread(): Promise<void> {
   }
 }
 
+async function stopThreadWork(): Promise<void> {
+  if (!canStop.value || props.thread === null) {
+    return;
+  }
+
+  stopping.value = true;
+  try {
+    const result = await apiClient.stopThread(props.thread.id);
+    if (
+      result.transportStopAttempted &&
+      !result.transportStopAccepted &&
+      result.runningQueueItemId !== null
+    ) {
+      notifyInfo(
+        "Queued work was stopped, but the running agent did not confirm interruption.",
+        "Stop requested"
+      );
+      return;
+    }
+
+    notifyInfo("Thread agent stop requested.", "Stop requested");
+  } catch (error) {
+    notifyError(error, "Failed to stop thread agent");
+  } finally {
+    stopping.value = false;
+  }
+}
+
 function approvalPartStatus(approvalId: string, fallback: string): string {
   return approvals.approvals.find((approval) => approval.id === approvalId)?.status ?? fallback;
 }
 
 function renderMarkdown(markdown: string): string {
-  return markdownRenderer.render(markdown);
+  return markdownRenderer.render(withWorkspaceLinks(markdown));
+}
+
+function withWorkspaceLinks(markdown: string): string {
+  return markdown.replace(WORKSPACE_PATH_PATTERN, (match, prefix: string, rawPath: string) => {
+    const relativePath = toWorkspaceRelativePath(rawPath);
+    if (relativePath === null) {
+      return match;
+    }
+
+    return `${prefix}[${rawPath}](${WORKSPACE_LINK_PREFIX}${encodeURIComponent(relativePath)})`;
+  });
+}
+
+function toWorkspaceRelativePath(rawPath: string): string | null {
+  const trimmed = rawPath.trim();
+  if (trimmed.length === 0 || trimmed.endsWith("/")) {
+    return null;
+  }
+
+  const normalized = trimmed.replaceAll("\\", "/");
+  const workspace = props.appServer?.workspace.replaceAll("\\", "/").replace(/\/+$/u, "");
+  if (workspace !== undefined && normalized.startsWith(`${workspace}/`)) {
+    return normalized.slice(workspace.length + 1);
+  }
+
+  if (normalized.startsWith("/")) {
+    return null;
+  }
+
+  const segments = normalized.split("/");
+  if (segments.includes("..")) {
+    return null;
+  }
+
+  return normalized.replace(/^\.\//u, "");
+}
+
+async function handleMessageListClick(event: MouseEvent): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const link = target.closest("a[data-workspace-path]");
+  if (!(link instanceof HTMLAnchorElement)) {
+    return;
+  }
+
+  event.preventDefault();
+  const appServerId = props.appServer?.id;
+  const workspacePath = link.dataset.workspacePath;
+  if (appServerId === undefined || workspacePath === undefined || workspacePath.length === 0) {
+    return;
+  }
+
+  try {
+    await apiClient.openWorkspaceFileInVscode(appServerId, { path: workspacePath });
+  } catch (error) {
+    notifyError(error, "Failed to open file in VS Code");
+  }
 }
 
 function formatJson(value: unknown): string {
@@ -1257,4 +1841,228 @@ function formatMessageDelta(previous: number | null, current: number): string {
   const remainingMinutes = minutes % 60;
   return remainingMinutes === 0 ? `+${hours}h` : `+${hours}h ${remainingMinutes}m`;
 }
+
+function rankWorkspaceSearchResults(
+  entries: readonly WorkspaceEntryDto[],
+  query: string
+): readonly FileSearchResult[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  const compactQuery = compactSearchToken(normalizedQuery);
+
+  return [...entries]
+    .filter((entry) => entry.kind === "file")
+    .sort((left, right) => {
+      const scoreDifference =
+        workspaceSearchScore(right, normalizedQuery, compactQuery) -
+        workspaceSearchScore(left, normalizedQuery, compactQuery);
+      if (scoreDifference !== 0) {
+        return scoreDifference;
+      }
+
+      return left.path.localeCompare(right.path);
+    });
+}
+
+function workspaceSearchScore(
+  entry: WorkspaceEntryDto,
+  normalizedQuery: string,
+  compactQuery: string
+): number {
+  const name = entry.name.toLowerCase();
+  const fullPath = entry.path.toLowerCase();
+  const compactName = compactSearchToken(name);
+  const compactPath = compactSearchToken(fullPath);
+  let score = 0;
+
+  if (name === normalizedQuery) {
+    score += 2000;
+  } else if (name.startsWith(normalizedQuery)) {
+    score += 1400;
+  } else if (name.includes(normalizedQuery)) {
+    score += 1000;
+  }
+
+  if (fullPath.startsWith(normalizedQuery)) {
+    score += 520;
+  } else if (fullPath.includes(normalizedQuery)) {
+    score += 360;
+  }
+
+  if (compactQuery.length > 0) {
+    if (compactName.startsWith(compactQuery)) {
+      score += 760;
+    } else if (fuzzyIncludes(compactName, compactQuery)) {
+      score += 520;
+    }
+
+    if (compactPath.startsWith(compactQuery)) {
+      score += 260;
+    } else if (fuzzyIncludes(compactPath, compactQuery)) {
+      score += 180;
+    }
+  }
+
+  return score - entry.path.length;
+}
+
+function formatFileSearchEntryLabel(entry: WorkspaceEntryDto): string {
+  return entry.kind === "directory" ? `${entry.name}/` : entry.name;
+}
+
+function compactSearchToken(value: string): string {
+  return value.replace(/[\s/._-]+/gu, "");
+}
+
+function userMessageHistoryText(message: ChatMessage): string {
+  return message.parts
+    .flatMap((part) => (part.type === "markdown" ? [part.text] : []))
+    .join("\n")
+    .trim();
+}
+
+function fuzzyIncludes(candidate: string, query: string): boolean {
+  if (query.length === 0) {
+    return true;
+  }
+
+  let index = 0;
+  for (const char of candidate) {
+    if (char === query[index]) {
+      index += 1;
+      if (index >= query.length) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
 </script>
+
+<style scoped>
+.composer {
+  position: relative;
+}
+
+.composer.search-open {
+  padding-top: 280px;
+}
+
+.workspace-search-overlay {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 5;
+}
+
+.workspace-search-panel {
+  border: 1px solid var(--border-list);
+  border-radius: 12px;
+  background: var(--bg-panel-soft);
+  box-shadow: 0 18px 40px var(--shadow-panel);
+  overflow: hidden;
+}
+
+.workspace-search-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, var(--accent-success), color-mix(in srgb, var(--accent-success) 68%, var(--accent-primary) 32%));
+  color: var(--warm-white);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.workspace-search-input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border-list);
+  padding: 12px 14px;
+  background: var(--bg-panel-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+
+.workspace-search-results {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px;
+  background: color-mix(in srgb, var(--bg-panel-soft) 80%, var(--bg-panel-elevated) 20%);
+}
+
+.workspace-search-hint {
+  margin: 0;
+  padding: 12px 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.workspace-search-empty {
+  color: var(--text-danger);
+}
+
+.workspace-search-result {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-search-result strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.workspace-search-result span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.workspace-search-result.directory strong {
+  color: var(--accent-success);
+}
+
+.thread-panel.ready-pulse .thread-header,
+.thread-panel.ready-pulse .composer {
+  animation: thread-ready-pulse 1.8s ease;
+}
+
+.workspace-search-result:hover,
+.workspace-search-result.selected {
+  border-color: var(--border-list);
+  background: var(--bg-panel-elevated);
+}
+
+@keyframes thread-ready-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--glow-success-0);
+    transform: translateY(0);
+  }
+
+  20% {
+    box-shadow: 0 0 0 4px var(--glow-success-1);
+    transform: translateY(-1px);
+  }
+
+  55% {
+    box-shadow: 0 0 0 10px var(--glow-success-2);
+    transform: translateY(0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 var(--glow-success-0);
+    transform: translateY(0);
+  }
+}
+
+</style>

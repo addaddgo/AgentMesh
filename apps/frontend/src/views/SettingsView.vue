@@ -4,14 +4,20 @@
       <div>
         <h1>App Servers Configuration</h1>
       </div>
-      <el-button
-        :icon="Refresh"
-        :loading="appServers.loading"
-        circle
-        title="Refresh app-servers"
-        aria-label="Refresh app-servers"
-        @click="appServers.load()"
-      />
+      <div class="settings-header-actions">
+        <div class="theme-switcher">
+          <span>Theme</span>
+          <el-segmented v-model="selectedTheme" :options="themeOptions" />
+        </div>
+        <el-button
+          :icon="Refresh"
+          :loading="appServers.loading"
+          circle
+          title="Refresh app-servers"
+          aria-label="Refresh app-servers"
+          @click="appServers.load()"
+        />
+      </div>
     </header>
 
     <div class="app-server-layout">
@@ -213,6 +219,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { apiClient, ApiClientError, type CreateAppServerPayload } from "../api/client";
 import { notifyError } from "../stores/errors";
 import { useAppServerStore } from "../stores/appServers";
+import { useThemeStore, type ThemeMode } from "../stores/theme";
 
 type AppServerForm = {
   name: string;
@@ -229,8 +236,13 @@ const hostKindOptions = [
   { label: "Local", value: "local" },
   { label: "SSH", value: "ssh" }
 ] as const;
+const themeOptions = [
+  { label: "Light", value: "light" },
+  { label: "Dark", value: "dark" }
+] as const;
 
 const appServers = useAppServerStore();
+const theme = useThemeStore();
 const editingId = ref<string | null>(null);
 const saving = ref(false);
 const runningAction = ref<"start" | "stop" | "restart" | null>(null);
@@ -242,6 +254,12 @@ const editingServer = computed(
   () => appServers.appServers.find((server) => server.id === editingId.value) ?? null
 );
 const generatedName = computed(() => generateNamePreview(form.workspace, appServers.appServers));
+const selectedTheme = computed<ThemeMode>({
+  get: () => theme.theme,
+  set: (value) => {
+    theme.setTheme(value);
+  }
+});
 
 onMounted(() => {
   void appServers.load();

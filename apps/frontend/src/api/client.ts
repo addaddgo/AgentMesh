@@ -2,10 +2,13 @@ import type {
   ApiErrorResponse,
   TodoItemDto,
   TodoCreateRequest,
+  TodoCategoryListResponse,
   TodoUpdateRequest,
   TodoReorderRequest,
   AppServerDto,
   AppServerListResponse,
+  AccountUsageDto,
+  AccountUsageResponse,
   ApprovalDecision,
   ApprovalDto,
   ApprovalListResponse,
@@ -38,6 +41,7 @@ import type {
   ThreadMessagesResponse,
   ThreadQueueResponse,
   ThreadResumeResponse,
+  ThreadStopResponse,
   ThreadSyncResponse,
   TargetSkillDto,
   TargetSkillListResponse,
@@ -47,9 +51,11 @@ import type {
   UiLayoutPutResponse,
   WorkspaceEntryDto,
   WorkspaceEntryListResponse,
+  WorkspaceOpenInVscodeRequest,
+  WorkspaceOpenInVscodeResponse,
   UploadImageResponse,
   WorkspaceUsageDto,
-  WorkspaceUsageResponse,
+  WorkspaceUsageResponse
 } from "@agentmesh/shared";
 
 export class ApiClientError extends Error {
@@ -139,6 +145,29 @@ export class ApiClient {
       `/api/app-servers/${encodeURIComponent(appServerId)}/workspace/entries?query=${encodeURIComponent(query)}`
     );
     return response.entries;
+  }
+
+  public async searchWorkspaceFiles(
+    appServerId: string,
+    query: string
+  ): Promise<readonly WorkspaceEntryDto[]> {
+    const response = await this.request<WorkspaceEntryListResponse>(
+      `/api/app-servers/${encodeURIComponent(appServerId)}/workspace/search-files?query=${encodeURIComponent(query)}`
+    );
+    return response.entries;
+  }
+
+  public openWorkspaceFileInVscode(
+    appServerId: string,
+    payload: WorkspaceOpenInVscodeRequest
+  ): Promise<WorkspaceOpenInVscodeResponse> {
+    return this.request<WorkspaceOpenInVscodeResponse>(
+      `/api/app-servers/${encodeURIComponent(appServerId)}/workspace/open-in-vscode`,
+      {
+        method: "POST",
+        body: payload
+      }
+    );
   }
 
   public async listCodexSkills(appServerId: string): Promise<readonly SkillDto[]> {
@@ -248,6 +277,12 @@ export class ApiClient {
     return this.request<ThreadQueueResponse>(`/api/threads/${encodeURIComponent(threadId)}/queue`);
   }
 
+  public stopThread(threadId: string): Promise<ThreadStopResponse> {
+    return this.request<ThreadStopResponse>(`/api/threads/${encodeURIComponent(threadId)}/stop`, {
+      method: "POST"
+    });
+  }
+
   public async listThreadCodexEvents(
     threadId: string,
     limit = 100
@@ -263,6 +298,11 @@ export class ApiClient {
   public async getWorkspaceUsage(): Promise<readonly WorkspaceUsageDto[]> {
     const response = await this.request<WorkspaceUsageResponse>("/api/stats/workspace-usage");
     return response.workspaces;
+  }
+
+  public async getAccountUsage(): Promise<readonly AccountUsageDto[]> {
+    const response = await this.request<AccountUsageResponse>("/api/stats/account-usage");
+    return response.usage;
   }
 
   public sendMessage(payload: SendTextMessageRequest): Promise<SendMessageResponse> {
@@ -368,6 +408,11 @@ export class ApiClient {
   public async listTodos(): Promise<readonly TodoItemDto[]> {
     const response = await this.request<{ readonly items: readonly TodoItemDto[] }>("/api/todos");
     return response.items;
+  }
+
+  public async listTodoCategories(): Promise<readonly string[]> {
+    const response = await this.request<TodoCategoryListResponse>("/api/todos/categories");
+    return response.categories;
   }
 
   public async createTodo(payload: TodoCreateRequest): Promise<TodoItemDto> {

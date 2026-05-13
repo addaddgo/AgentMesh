@@ -31,6 +31,21 @@ export class TodoService {
     return rows.map(toTodoItemDto);
   }
 
+  public listCategories(): readonly string[] {
+    const rows = this.database.sqlite
+      .prepare(
+        `
+          SELECT DISTINCT category
+          FROM todos
+          WHERE category IS NOT NULL AND TRIM(category) != ''
+          ORDER BY LOWER(category) ASC, category ASC
+        `
+      )
+      .all() as Array<{ readonly category: string }>;
+
+    return rows.map((row) => row.category);
+  }
+
   public create(input: { name: string; description?: string; category?: string | null | undefined; dueAt?: number | null | undefined }): TodoItemDto {
     const now = Date.now();
     const id = `todo_${randomUUID()}`;

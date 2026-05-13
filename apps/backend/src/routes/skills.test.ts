@@ -20,7 +20,7 @@ describe("skills API", () => {
     return backend;
   }
 
-  it("lists immediate child directories with SKILL.md and parses front matter", async () => {
+  it("lists nested skill directories with relative paths and parses front matter", async () => {
     const { app, config } = await setup();
     writeSkill(config.skillsRoot, "alpha-dir", {
       skillMd: ["---", "name: alpha", "description: Alpha skill", "---", "# Alpha"].join("\n")
@@ -36,8 +36,9 @@ describe("skills API", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json<SkillListResponse>()).toEqual({
       skills: [
-        { name: "alpha", description: "Alpha skill" },
-        { name: "beta-dir", description: "" }
+        { name: "alpha", description: "Alpha skill", path: "alpha-dir" },
+        { name: "beta-dir", description: "", path: "beta-dir" },
+        { name: "nested", description: "", path: "nested-parent/nested-child" }
       ]
     });
   });

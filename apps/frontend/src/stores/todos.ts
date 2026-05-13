@@ -6,20 +6,35 @@ import { notifyError } from "./errors";
 
 type TodoState = {
   items: TodoItemDto[];
+  categories: string[];
   loading: boolean;
 };
 
 export const useTodoStore = defineStore("todos", {
   state: (): TodoState => ({
     items: [],
+    categories: [],
     loading: false
   }),
 
   actions: {
+    async loadCategories(): Promise<void> {
+      try {
+        this.categories = [...(await apiClient.listTodoCategories())];
+      } catch (error) {
+        notifyError(error, "Failed to load todo categories");
+      }
+    },
+
     async load(): Promise<void> {
       this.loading = true;
       try {
-        this.items = [...(await apiClient.listTodos())];
+        const [items, categories] = await Promise.all([
+          apiClient.listTodos(),
+          apiClient.listTodoCategories()
+        ]);
+        this.items = [...items];
+        this.categories = [...categories];
       } catch (error) {
         notifyError(error, "Failed to load todos");
       } finally {
@@ -30,17 +45,20 @@ export const useTodoStore = defineStore("todos", {
     async create(payload: TodoCreateRequest): Promise<TodoItemDto> {
       const item = await apiClient.createTodo(payload);
       this.items = [...this.items, item];
+      await this.loadCategories();
       return item;
     },
 
     async update(id: string, payload: TodoUpdateRequest): Promise<void> {
       const item = await apiClient.updateTodo(id, payload);
       this.items = this.items.map((existing) => (existing.id === id ? item : existing));
+      await this.loadCategories();
     },
 
     async remove(id: string): Promise<void> {
       await apiClient.deleteTodo(id);
       this.items = this.items.filter((existing) => existing.id !== id);
+      await this.loadCategories();
     },
 
     async reorder(ids: readonly string[]): Promise<void> {

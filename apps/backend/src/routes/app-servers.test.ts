@@ -776,6 +776,37 @@ describe("app-server configuration API", () => {
       ]
     });
   });
+
+  it("searches workspace files for fuzzy file open", async () => {
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    fs.mkdirSync(path.join(workspace, "src"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "notes"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "node_modules"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "src", "ThreadPanel.vue"), "<template />");
+    fs.writeFileSync(path.join(workspace, "notes", "todo.md"), "- item");
+    fs.writeFileSync(path.join(workspace, "node_modules", "ignored.js"), "ignored");
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace
+      }
+    });
+    const appServerId = created.json<{ id: string }>().id;
+
+    const searched = await app.inject({
+      method: "GET",
+      url: `/api/app-servers/${appServerId}/workspace/search-files?query=tpvue`
+    });
+
+    expect(searched.statusCode).toBe(200);
+    expect(searched.json()).toEqual({
+      entries: [{ path: "src/ThreadPanel.vue", name: "ThreadPanel.vue", kind: "file" }]
+    });
+  });
 });
 
 function createFakeCodexScript(

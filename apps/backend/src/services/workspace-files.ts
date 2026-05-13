@@ -19,6 +19,7 @@ type AppServerRow = {
 
 const EXCLUDED_NAMES = new Set([".git", "node_modules", ".agentmesh"]);
 const MAX_ENTRIES = 80;
+const MAX_SEARCH_RESULTS = 80;
 
 export class WorkspaceFileService {
   public constructor(private readonly database: DatabaseHandle) {}
@@ -33,6 +34,21 @@ export class WorkspaceFileService {
     return appServer.host_kind === "local"
       ? this.listLocal(appServer.workspace, safeDirectory, prefix)
       : this.listRemote(appServer, safeDirectory, prefix);
+  }
+
+  public searchFiles(appServerId: string, query = ""): WorkspaceEntryDto[] {
+    const appServer = this.getAppServer(appServerId);
+    const normalized = normalizeSearchQuery(query);
+    if (normalized.length === 0) {
+      return [];
+    }
+
+    const files =
+      appServer.host_kind === "local"
+        ? this.searchLocalFiles(appServer.workspace, normalized)
+        : this.searchRemoteFiles(appServer, normalized);
+
+    return files.slice(0, MAX_SEARCH_RESULTS);
   }
 
   private listLocal(workspace: string, relativeDirectory: string, prefix: string): WorkspaceEntryDto[] {
@@ -93,6 +109,75 @@ export class WorkspaceFileService {
       .slice(0, MAX_ENTRIES);
   }
 
+  private searchLocalFiles(workspace: string, query: string): WorkspaceEntryDto[] {
+    const results: WorkspaceEntryDto[] = [];
+    const stack = [""];
+
+    while (stack.length > 0) {
+      const relativeDirectory = stack.pop() ?? "";
+      const targetDirectory = path.resolve(workspace, relativeDirectory);
+      assertPathInside(workspace, targetDirectory, "Workspace file query must stay inside workspace");
+
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(targetDirectory, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (EXCLUDED_NAMES.has(entry.name)) {
+          continue;
+        }
+
+        const entryPath = path.posix.join(relativeDirectory, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(entryPath);
+          continue;
+        }
+
+        if (!entry.isFile() || !matchesFileQuery(entryPath, query)) {
+          continue;
+        }
+
+        results.push({ path: entryPath, name: entry.name, kind: "file" });
+      }
+    }
+
+    return results.sort(compareSearchEntries);
+  }
+
+  private searchRemoteFiles(appServer: AppServerRow, query: string): WorkspaceEntryDto[] {
+    const result = spawnSync(
+      "ssh",
+      [
+        ...(appServer.ssh_port === null ? [] : ["-p", String(appServer.ssh_port)]),
+        sshTarget(appServer),
+        `cd ${shellQuote(appServer.workspace)} && find . \\( -name .git -o -name node_modules -o -name .agentmesh \\) -prune -o -type f -print`
+      ],
+      { encoding: "utf8" }
+    );
+
+    if (result.error !== undefined) {
+      throw new SshError(result.error.message);
+    }
+
+    if (result.status !== 0) {
+      throw new SshError(result.stderr.trim() || "Failed to search remote workspace files");
+    }
+
+    return result.stdout
+      .split(/\r?\n/u)
+      .map((line) => line.replace(/^\.\//u, ""))
+      .filter((line) => line.length > 0 && matchesFileQuery(line, query))
+      .map((entryPath) => ({
+        path: entryPath,
+        name: path.posix.basename(entryPath),
+        kind: "file" as const
+      }))
+      .sort(compareSearchEntries);
+  }
+
   private getAppServer(appServerId: string): AppServerRow {
     const row = this.database.sqlite
       .prepare("SELECT id, host_kind, host, ssh_user, ssh_port, workspace FROM app_servers WHERE id = ?")
@@ -117,6 +202,10 @@ function normalizeRelativeQuery(query: string): string {
   return trimmed;
 }
 
+function normalizeSearchQuery(query: string): string {
+  return query.trim().replaceAll("\\", "/").replace(/\0/gu, "");
+}
+
 function isVisibleMatch(name: string, prefix: string): boolean {
   return !EXCLUDED_NAMES.has(name) && name.toLowerCase().startsWith(prefix.toLowerCase());
 }
@@ -136,6 +225,35 @@ function compareEntries(left: WorkspaceEntryDto, right: WorkspaceEntryDto): numb
   }
 
   return left.path.localeCompare(right.path);
+}
+
+function compareSearchEntries(left: WorkspaceEntryDto, right: WorkspaceEntryDto): number {
+  return left.path.localeCompare(right.path);
+}
+
+function matchesFileQuery(candidatePath: string, query: string): boolean {
+  const normalizedQuery = query.toLowerCase();
+  const basename = path.posix.basename(candidatePath).toLowerCase();
+  const fullPath = candidatePath.toLowerCase();
+  return fuzzyIncludes(basename, normalizedQuery) || fuzzyIncludes(fullPath, normalizedQuery);
+}
+
+function fuzzyIncludes(candidate: string, query: string): boolean {
+  if (query.length === 0) {
+    return true;
+  }
+
+  let queryIndex = 0;
+  for (const char of candidate) {
+    if (char === query[queryIndex]) {
+      queryIndex += 1;
+      if (queryIndex >= query.length) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function sshTarget(appServer: AppServerRow): string {

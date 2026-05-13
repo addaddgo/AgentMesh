@@ -11,11 +11,13 @@ import { defineStore } from "pinia";
 
 import { apiClient } from "../api/client";
 import { eventBus } from "../services/eventBus";
+import { notifyThreadReady } from "../services/notifications";
 import { sseClient, type SseConnectionState } from "../services/sse";
 import { useAppServerStore } from "./appServers";
 import { useApprovalStore } from "./approvals";
 import { notifyError, notifyInfo } from "./errors";
 import { useMessageStore } from "./messages";
+import { useThreadReadyStore } from "./threadReady";
 import { useThreadStore } from "./threads";
 import { useUiLayoutStore } from "./uiLayout";
 import { useTodoStore } from "./todos";
@@ -74,6 +76,7 @@ export const useRealtimeStore = defineStore("realtime", {
       const threads = useThreadStore();
       const messages = useMessageStore();
       const approvals = useApprovalStore();
+      const threadReady = useThreadReadyStore();
 
       await appServers.load();
       await approvals.load();
@@ -83,6 +86,7 @@ export const useRealtimeStore = defineStore("realtime", {
           await Promise.all(
             (threads.openThreadIdsByAppServerId[appServerId] ?? []).map(async (threadId) => {
               await Promise.all([messages.load(threadId), messages.loadQueue(threadId)]);
+              threadReady.prime(threadId);
             })
           );
         })
@@ -113,6 +117,9 @@ export const useRealtimeStore = defineStore("realtime", {
               threads.loadForAppServer(appServerId),
               approvals.load()
             ]);
+            for (const threadId of threads.openThreadIdsByAppServerId[appServerId] ?? []) {
+              this.evaluateReadyTransition(threadId);
+            }
           }
         })
       );
@@ -145,8 +152,10 @@ export const useRealtimeStore = defineStore("realtime", {
           const messages = useMessageStore();
           if (message !== null) {
             messages.upsertMessage(message);
+            this.evaluateReadyTransition(message.threadId);
           } else if (event.thread_id !== undefined) {
             await messages.load(event.thread_id);
+            this.evaluateReadyTransition(event.thread_id);
           }
         })
       );
@@ -158,8 +167,10 @@ export const useRealtimeStore = defineStore("realtime", {
           const messages = useMessageStore();
           if (item !== null) {
             messages.upsertQueueItem(item);
+            this.evaluateReadyTransition(item.threadId);
           } else if (event.thread_id !== undefined) {
             await messages.loadQueue(event.thread_id);
+            this.evaluateReadyTransition(event.thread_id);
           }
         })
       );
@@ -181,6 +192,7 @@ export const useRealtimeStore = defineStore("realtime", {
                 // Thread may already be gone
               }
             }
+            this.evaluateReadyTransition(turn.threadId);
           }
         })
       );
@@ -192,8 +204,12 @@ export const useRealtimeStore = defineStore("realtime", {
           const approvals = useApprovalStore();
           if (approval !== null) {
             approvals.upsert(approval);
+            this.evaluateReadyTransition(approval.threadId);
           } else {
             await approvals.load();
+            if (event.thread_id !== undefined) {
+              this.evaluateReadyTransition(event.thread_id);
+            }
           }
         })
       );
@@ -220,6 +236,29 @@ export const useRealtimeStore = defineStore("realtime", {
           unsub();
         }
       };
+    },
+
+    evaluateReadyTransition(threadId: string): void {
+      const threadReady = useThreadReadyStore();
+      const threads = useThreadStore();
+      const transition = threadReady.evaluate(threadId);
+      if (!transition.becameReady) {
+        return;
+      }
+
+      const info = threadReady.threadInfo(threadId);
+      if (info === null) {
+        return;
+      }
+
+      const openThreadIds = threads.openThreadIdsByAppServerId[info.thread.appServerId] ?? [];
+      const isOpen = openThreadIds.includes(threadId);
+      const isFocused = threads.focusedThreadIdByAppServerId[info.thread.appServerId] === threadId;
+      if (!isOpen || !isFocused) {
+        return;
+      }
+
+      notifyThreadReady(info.thread, info.appServer);
     }
   }
 });

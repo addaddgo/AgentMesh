@@ -144,10 +144,10 @@ function formatDuration(ms: number): string {
   padding: 0.75rem;
   border: 1px solid var(--line);
   border-radius: 1.15rem;
-  background: #f5f5f0;
+  background: var(--bg-panel-soft);
   box-shadow:
     0 18px 46px var(--warm-shadow),
-    0 1px 0 rgba(255, 255, 255, 0.85) inset;
+    0 1px 0 color-mix(in srgb, var(--warm-white) 85%, transparent) inset;
   overflow: hidden;
 }
 
@@ -159,7 +159,7 @@ function formatDuration(ms: number): string {
   padding: 0.62rem 0.75rem;
   border-bottom: 1px solid var(--line);
   border-radius: 1.15rem 1.15rem 0 0;
-  background: #d4edda;
+  background: var(--bg-tool-header);
 }
 
 .stats-header h2 {
@@ -206,9 +206,9 @@ function formatDuration(ms: number): string {
   align-items: center;
   gap: 0.5rem;
   padding: 0.35rem 0.5rem;
-  border: 1px solid #c0c0c0;
+  border: 1px solid var(--border-list);
   border-radius: 0.75rem;
-  background: rgba(255, 253, 244, 0.72);
+  background: var(--bg-row-subtle);
 }
 
 .bar-label {

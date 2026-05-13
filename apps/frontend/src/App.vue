@@ -1,5 +1,9 @@
 <template>
-  <el-container class="app-shell">
+  <el-container
+    class="app-shell"
+    :class="[`theme-${theme.theme}`]"
+    :data-theme="theme.theme"
+  >
     <header class="top-navigation">
       <nav>
         <RouterLink to="/">Boards</RouterLink>
@@ -23,17 +27,30 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, watch } from "vue";
 import { RouterLink, RouterView } from "vue-router";
 
+import { requestBrowserNotificationPermission } from "./services/notifications";
 import { useRealtimeStore } from "./stores/realtime";
+import { useThemeStore } from "./stores/theme";
 import { useUiLayoutStore } from "./stores/uiLayout";
 
 const realtime = useRealtimeStore();
+const theme = useThemeStore();
 const uiLayout = useUiLayoutStore();
+
+theme.loadPersistedTheme();
+
+watch(
+  () => theme.theme,
+  () => {
+    theme.applyTheme();
+  }
+);
 
 onMounted(() => {
   void uiLayout.loadPersistedState();
+  void requestBrowserNotificationPermission();
   realtime.start();
 });
 </script>

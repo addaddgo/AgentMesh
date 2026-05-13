@@ -207,6 +207,22 @@ export class ApprovalService {
     });
   }
 
+  public markPendingForThreadFailed(threadId: string, error: string): ApprovalDto[] {
+    const rows = this.database.sqlite
+      .prepare("SELECT * FROM approvals WHERE thread_id = ? AND status = 'pending'")
+      .all(threadId) as ApprovalRow[];
+
+    return rows.map((row) => {
+      const updated = this.updateStatus(row.id, "failed", {
+        response: null,
+        error
+      });
+      this.updateApprovalMessagePart(updated);
+      this.publishUpdated(updated);
+      return updated;
+    });
+  }
+
   public get(id: string): ApprovalDto {
     const row = this.database.sqlite.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as
       | ApprovalRow

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import type {
+  TodoCategoryListResponse,
   TodoCreateResponse,
   TodoItemResponse,
   TodoListResponse,
@@ -46,6 +47,10 @@ export async function registerTodoRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/todos", async (): Promise<TodoListResponse> => {
     return { items: service.list() };
+  });
+
+  app.get("/api/todos/categories", async (): Promise<TodoCategoryListResponse> => {
+    return { categories: service.listCategories() };
   });
 
   app.post(

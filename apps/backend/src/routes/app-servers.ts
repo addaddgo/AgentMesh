@@ -11,7 +11,9 @@ import type {
   ThreadListResponse,
   ThreadResumeResponse,
   ThreadSyncResponse,
-  WorkspaceEntryListResponse
+  WorkspaceEntryListResponse,
+  WorkspaceOpenInVscodeRequest,
+  WorkspaceOpenInVscodeResponse
 } from "@agentmesh/shared";
 
 import { CodexEventService } from "../services/codex-events.js";
@@ -23,6 +25,7 @@ import {
 import type { DatabaseHandle } from "../db/index.js";
 import { ThreadSyncService } from "../services/thread-sync.js";
 import { WorkspaceFileService } from "../services/workspace-files.js";
+import { WorkspaceOpenService } from "../services/workspace-open.js";
 import { validateBody, validateParams, validateQuery } from "../validation.js";
 
 type CodexRequester = Parameters<ThreadSyncService["materializeCodexThread"]>[1];
@@ -43,6 +46,12 @@ const eventQuerySchema = z.object({
 const workspaceEntryQuerySchema = z.object({
   query: z.string().max(512).default("")
 });
+
+const workspaceOpenBodySchema = z
+  .object({
+    path: z.string().trim().min(1).max(4096)
+  })
+  .strict();
 
 const commandOptionQuerySchema = z.object({
   command: z.string().trim().min(1).max(80),
@@ -82,6 +91,7 @@ export async function registerAppServerRoutes(app: FastifyInstance): Promise<voi
   const threadSync = new ThreadSyncService(app.database, app.events, app.threadStatusCache);
   const codexEvents = new CodexEventService(app.database);
   const workspaceFiles = new WorkspaceFileService(app.database);
+  const workspaceOpen = new WorkspaceOpenService(app.database);
 
   app.get(
     "/api/app-servers",
@@ -166,6 +176,30 @@ export async function registerAppServerRoutes(app: FastifyInstance): Promise<voi
       const { id } = request.params as z.infer<typeof appServerParamsSchema>;
       const { query } = request.query as z.infer<typeof workspaceEntryQuerySchema>;
       return { entries: workspaceFiles.listEntries(id, query) };
+    }
+  );
+
+  app.get(
+    "/api/app-servers/:id/workspace/search-files",
+    {
+      preHandler: [validateParams(appServerParamsSchema), validateQuery(workspaceEntryQuerySchema)]
+    },
+    async (request): Promise<WorkspaceEntryListResponse> => {
+      const { id } = request.params as z.infer<typeof appServerParamsSchema>;
+      const { query } = request.query as z.infer<typeof workspaceEntryQuerySchema>;
+      return { entries: workspaceFiles.searchFiles(id, query) };
+    }
+  );
+
+  app.post(
+    "/api/app-servers/:id/workspace/open-in-vscode",
+    {
+      preHandler: [validateParams(appServerParamsSchema), validateBody(workspaceOpenBodySchema)]
+    },
+    async (request): Promise<WorkspaceOpenInVscodeResponse> => {
+      const { id } = request.params as z.infer<typeof appServerParamsSchema>;
+      const { path } = request.body as WorkspaceOpenInVscodeRequest;
+      return workspaceOpen.openInVscode(id, path);
     }
   );
 

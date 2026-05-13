@@ -1,0 +1,17 @@
+[Unit]
+Description=Symphony frontend and backend dev servers
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/qingren/projects/symphony
+ExecStart=/home/qingren/projects/symphony/scripts/start-symphony.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillMode=mixed
+Environment=HOME=/home/qingren
+Environment=USER=qingren
+
+[Install]
+WantedBy=default.target

@@ -798,6 +798,88 @@ describe("app-server configuration API", () => {
     );
   });
 
+  it("keeps thread status stable across app-server stop and restart", async () => {
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    const scriptPath = createFakeCodexScript(tempDir, {
+      threadListPages: [
+        {
+          threads: [
+            {
+              id: "thread-1",
+              name: "main",
+              status: "idle",
+              cwd: workspace
+            }
+          ]
+        }
+      ]
+    });
+    fs.mkdirSync(workspace);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace,
+        command: `${process.execPath} ${scriptPath}`
+      }
+    });
+    const id = created.json<{ id: string }>().id;
+
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/api/app-servers/${id}/start`
+        })
+      ).statusCode
+    ).toBe(200);
+
+    const onlineThreads = await app.inject({
+      method: "GET",
+      url: `/api/app-servers/${id}/threads`
+    });
+    expect(onlineThreads.json()).toMatchObject({
+      threads: [{ threadName: "main", status: "idle" }]
+    });
+
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/api/app-servers/${id}/stop`
+        })
+      ).statusCode
+    ).toBe(200);
+
+    const offlineThreads = await app.inject({
+      method: "GET",
+      url: `/api/app-servers/${id}/threads`
+    });
+    expect(offlineThreads.json()).toMatchObject({
+      threads: [{ threadName: "main", status: "notLoaded" }]
+    });
+
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/api/app-servers/${id}/start`
+        })
+      ).statusCode
+    ).toBe(200);
+
+    const restartedThreads = await app.inject({
+      method: "GET",
+      url: `/api/app-servers/${id}/threads`
+    });
+    expect(restartedThreads.json()).toMatchObject({
+      threads: [{ threadName: "main", status: "idle" }]
+    });
+  });
+
   it("creates a main thread automatically when an app server starts with no workspace threads", async () => {
     const { app, tempDir } = await setup();
     const workspace = path.join(tempDir, "workspace");

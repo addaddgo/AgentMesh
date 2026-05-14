@@ -29,14 +29,19 @@
     />
 
     <div class="todo-list">
-      <template v-for="(group, groupIndex) in groupedItems" :key="groupIndex">
+      <template v-for="group in groupedItems" :key="group.key">
         <div
           class="todo-group-header"
           :class="{ collapsed: !expandedGroupNames.has(group.name) }"
+          @dragover.prevent="onGroupDragOver($event)"
+          @drop.prevent.stop="onGroupDrop($event, group)"
           @click="toggleGroup(group.name)"
         >
-          <span class="todo-group-arrow">{{ expandedGroupNames.has(group.name) ? '▼' : '▶' }}</span>
-          {{ group.name }}
+          <span class="todo-group-title">
+            <span class="todo-group-arrow">{{ expandedGroupNames.has(group.name) ? '▼' : '▶' }}</span>
+            <span>{{ group.name }}</span>
+          </span>
+          <span class="todo-group-stats">OK {{ group.doneCount }} · TODO {{ group.todoCount }}</span>
         </div>
         <template v-if="expandedGroupNames.has(group.name)">
         <article
@@ -267,12 +272,23 @@ const groupedItems = computed(() => {
     }
     groups.get(key)!.push(item);
   }
-  const result: { name: string; items: TodoItemDto[] }[] = [];
+  const result: {
+    key: string;
+    name: string;
+    category: string | null;
+    items: TodoItemDto[];
+    doneCount: number;
+    todoCount: number;
+  }[] = [];
   for (const [key, items] of groups) {
     const sorted = [...items].sort((a, b) => Number(a.done) - Number(b.done));
     result.push({
+      key,
       name: key === "__uncategorized__" ? "Uncategorized" : key,
-      items: sorted
+      category: key === "__uncategorized__" ? null : key,
+      items: sorted,
+      doneCount: sorted.filter((item) => item.done).length,
+      todoCount: sorted.filter((item) => !item.done).length
     });
   }
   return result;
@@ -456,18 +472,36 @@ async function onItemDrop(event: DragEvent, target: TodoItemDto): Promise<void> 
     return;
   }
 
-  const ids = store.items.map((item) => item.id);
-  const sourceIndex = ids.indexOf(sourceId);
-  const targetIndex = ids.indexOf(target.id);
+  await store.moveTodo(sourceId, {
+    category: target.category ?? null,
+    beforeId: target.id
+  });
+}
 
-  if (sourceIndex === -1 || targetIndex === -1) {
+function onGroupDragOver(event: DragEvent): void {
+  if (dragItemId.value === null) {
     return;
   }
 
-  ids.splice(sourceIndex, 1);
-  ids.splice(targetIndex, 0, sourceId);
+  if (event.dataTransfer !== null) {
+    event.dataTransfer.dropEffect = "move";
+  }
+}
 
-  await store.reorder(ids);
+async function onGroupDrop(
+  event: DragEvent,
+  group: { readonly category: string | null }
+): Promise<void> {
+  const sourceId = dragItemId.value;
+  dragItemId.value = null;
+
+  if (sourceId === null) {
+    return;
+  }
+
+  await store.moveTodo(sourceId, {
+    category: group.category
+  });
 }
 
 async function onDrop(event: DragEvent): Promise<void> {
@@ -742,6 +776,7 @@ async function onDrop(event: DragEvent): Promise<void> {
 .todo-group-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.35rem;
   font-size: 0.78rem;
   font-weight: 700;
@@ -759,12 +794,25 @@ async function onDrop(event: DragEvent): Promise<void> {
   user-select: none;
 }
 
+.todo-group-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
 .todo-group-header:hover {
   background: var(--todo-group-hover-bg);
 }
 
 .todo-group-arrow {
   font-size: 0.7rem;
+}
+
+.todo-group-stats {
+  color: var(--text-secondary);
+  font-size: 0.77rem;
+  white-space: nowrap;
 }
 
 .todo-add-button {

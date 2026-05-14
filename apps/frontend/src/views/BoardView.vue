@@ -629,7 +629,8 @@ async function restoreThread(threadId: string): Promise<void> {
     }
   }
 
-  if (thread.importedAt === null) {
+  const appServer = serverById(thread.appServerId);
+  if (thread.importedAt === null || appServer?.status === "online") {
     await threads.openThread(thread);
   } else {
     threads.rememberOpenThread(thread);

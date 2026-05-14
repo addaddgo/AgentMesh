@@ -243,6 +243,22 @@ export class ScheduledMessageService {
     return item;
   }
 
+  public delete(id: string): void {
+    const existing = this.getRow(id);
+    if (existing.status === "sending") {
+      throw new RequestValidationError("Scheduled message cannot be deleted while sending");
+    }
+
+    this.database.sqlite.prepare("DELETE FROM scheduled_messages WHERE id = ?").run(id);
+    this.events.publish({
+      type: "scheduled_message.updated",
+      payload: {
+        action: "deleted",
+        id
+      }
+    });
+  }
+
   public async pollDueTasks(now = Date.now()): Promise<void> {
     const dueRows = this.database.sqlite
       .prepare(

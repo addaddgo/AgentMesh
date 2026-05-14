@@ -103,6 +103,36 @@ describe("scheduled message routes", () => {
       }
     });
   });
+
+  it("deletes scheduled or failed messages", async () => {
+    const { app } = await setup();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/scheduled-messages",
+      payload: {
+        appServerId: "app-1",
+        threadId: "thread-1",
+        text: "Delete me",
+        delaySeconds: 60
+      }
+    });
+    const itemId = created.json().item.id as string;
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/scheduled-messages/${itemId}`
+    });
+
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json()).toEqual({ success: true });
+
+    const list = await app.inject({
+      method: "GET",
+      url: "/api/scheduled-messages"
+    });
+
+    expect(list.json()).toEqual({ items: [] });
+  });
 });
 
 function seedAppServerAndThread(backend: TestBackend): void {

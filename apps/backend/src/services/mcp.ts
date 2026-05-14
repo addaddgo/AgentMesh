@@ -101,7 +101,7 @@ export class AgentMeshMcpService {
       threads: rows.map((row) => ({
         thread_name: row.thread_name,
         thread_id: row.codex_thread_id,
-        status: this.statusCache.get(row.id) ?? "idle",
+        status: this.statusCache.get(row.id) ?? "notLoaded",
         updated_time: new Date(row.updated_at).toISOString()
       }))
     };

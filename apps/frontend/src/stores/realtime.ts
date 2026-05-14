@@ -246,8 +246,14 @@ export const useRealtimeStore = defineStore("realtime", {
 
       // --- Scheduled messages ---
       unsubs.push(
-        eventBus.on("scheduled_message.updated", async () => {
+        eventBus.on("scheduled_message.updated", async (event) => {
           const scheduledMessages = useScheduledMessageStore();
+          const action = readPayloadField<string>(event.payload, "action");
+          const id = readPayloadField<string>(event.payload, "id");
+          if (action === "deleted" && id !== null) {
+            scheduledMessages.removeLocal(id);
+            return;
+          }
           await scheduledMessages.load();
         })
       );

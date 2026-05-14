@@ -168,11 +168,10 @@
           </template>
           <template v-else>
             <div class="scheduled-message-topline">
-              <strong>{{ threadLabel(item.threadId) }}</strong>
+              <strong>{{ scheduledTargetLabel(item.appServerId, item.threadId) }}</strong>
               <span class="scheduled-message-status" :class="`is-${item.status}`">{{ item.status }}</span>
             </div>
             <div class="scheduled-message-subline">
-              <span>{{ serverLabel(item.appServerId) }}</span>
               <span>{{ formatRunAt(item.runAt) }}</span>
             </div>
             <p class="scheduled-message-preview">{{ item.text }}</p>
@@ -200,6 +199,16 @@
                   @click="cancelItem(item.id)"
                 >
                   Cancel
+                </el-button>
+                <el-button
+                  v-if="item.status === 'scheduled' || item.status === 'failed'"
+                  size="small"
+                  type="danger"
+                  plain
+                  :loading="deletingId === item.id"
+                  @click="deleteItem(item.id)"
+                >
+                  Delete
                 </el-button>
               </div>
             </div>
@@ -244,6 +253,7 @@ const editDelayMinutes = ref(5);
 const editText = ref("");
 const updatingId = ref<string | null>(null);
 const cancelingId = ref<string | null>(null);
+const deletingId = ref<string | null>(null);
 const editableStatuses = new Set<ScheduledMessageDto["status"]>(["scheduled", "failed", "canceled"]);
 
 const currentThreads = computed<readonly ThreadDto[]>(() =>
@@ -386,12 +396,25 @@ async function cancelItem(id: string): Promise<void> {
   }
 }
 
+async function deleteItem(id: string): Promise<void> {
+  deletingId.value = id;
+  try {
+    await store.remove(id);
+  } finally {
+    deletingId.value = null;
+  }
+}
+
 function serverLabel(appServerId: string): string {
   return appServers.appServers.find((server) => server.id === appServerId)?.name ?? appServerId;
 }
 
 function threadLabel(threadId: string): string {
   return threads.threadById(threadId)?.threadName ?? threadId;
+}
+
+function scheduledTargetLabel(appServerId: string, threadId: string): string {
+  return `${serverLabel(appServerId)} / ${threadLabel(threadId)}`;
 }
 
 function formatRunAt(runAt: number): string {
@@ -436,7 +459,9 @@ function statusSummary(item: ScheduledMessageDto): string {
     case "sent":
       return item.lastAttemptAt === null ? "Message submitted" : `Submitted after ${item.attemptCount} attempt${item.attemptCount === 1 ? "" : "s"}`;
     case "failed":
-      return `Failed after ${item.attemptCount} attempt${item.attemptCount === 1 ? "" : "s"}`;
+      return item.lastError === null
+        ? `Failed after ${item.attemptCount} attempt${item.attemptCount === 1 ? "" : "s"}`
+        : `Failed after ${item.attemptCount} attempt${item.attemptCount === 1 ? "" : "s"}: ${item.lastError}`;
     case "canceled":
       return "Canceled";
     default:

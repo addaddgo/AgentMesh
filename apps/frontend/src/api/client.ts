@@ -6,6 +6,7 @@ import type {
   TodoUpdateRequest,
   TodoReorderRequest,
   ScheduledMessageCreateRequest,
+  ScheduledMessageDeleteResponse,
   ScheduledMessageDto,
   ScheduledMessageListResponse,
   ScheduledMessageUpdateRequest,
@@ -495,6 +496,15 @@ export class ApiClient {
       }
     );
     return response.item;
+  }
+
+  public async deleteScheduledMessage(id: string): Promise<ScheduledMessageDeleteResponse> {
+    return this.request<ScheduledMessageDeleteResponse>(
+      `/api/scheduled-messages/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE"
+      }
+    );
   }
 
   private async request<T>(

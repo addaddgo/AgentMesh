@@ -56,6 +56,12 @@ type MessageRow = {
   readonly updated_at: number;
 };
 
+type TurnRow = {
+  readonly id: string;
+  readonly codex_turn_id: string | null;
+  readonly created_at: number;
+};
+
 type ImportedTurn = {
   readonly codexTurnId: string | null;
   readonly messages: readonly ImportedMessage[];
@@ -77,7 +83,7 @@ export class ThreadImportService {
 
   public getThread(threadId: string): ThreadDto {
     const thread = this.findThread(threadId);
-    return this.toThreadDto(thread, this.findAppServerStatus(thread.app_server_id));
+    return this.toThreadDto(thread);
   }
 
   public listMessages(threadId: string): ChatMessage[] {
@@ -115,22 +121,32 @@ export class ThreadImportService {
         throw new ProtocolError("Subagent thread requires a live Codex transport");
       }
 
-      const raw = await requester.request("thread/read", { threadId: existing.codex_thread_id });
+      const raw = await requester.request("thread/read", {
+        threadId: existing.codex_thread_id,
+        includeTurns: true
+      });
       const messages = normalizeThreadRead(raw).flatMap((turn) =>
         turn.messages.map((message, index) =>
           toTransientMessageDto(existing, turn.codexTurnId, message, index)
         )
       );
       return {
-        thread: this.toThreadDto(existing, this.findAppServerStatus(existing.app_server_id)),
+        thread: this.toThreadDto(existing),
         imported: false,
         messages
       };
     }
 
     if (existing.imported_at !== null) {
+      if (requester !== undefined) {
+        const synced = await this.syncImportedThread(existing, requester);
+        if (synced !== null) {
+          return synced;
+        }
+      }
+
       return {
-        thread: this.toThreadDto(existing, this.findAppServerStatus(existing.app_server_id)),
+        thread: this.toThreadDto(existing),
         imported: false,
         messages: this.listMessages(threadId)
       };
@@ -140,7 +156,10 @@ export class ThreadImportService {
       throw new ProtocolError("Thread has not been imported and no Codex transport is available");
     }
 
-    const raw = await requester.request("thread/read", { threadId: existing.codex_thread_id });
+    const raw = await requester.request("thread/read", {
+      threadId: existing.codex_thread_id,
+      includeTurns: true
+    });
     const importedTurns = normalizeThreadRead(raw);
     const importId = randomUUID();
     const now = Date.now();
@@ -243,6 +262,216 @@ export class ThreadImportService {
     return { thread, imported: true, messages };
   }
 
+  private async syncImportedThread(
+    thread: ThreadRow,
+    requester: CodexRequester
+  ): Promise<{
+    readonly thread: ThreadDto;
+    readonly imported: boolean;
+    readonly messages: ChatMessage[];
+  } | null> {
+    const localAssistantCreatedAt = this.findLastAssistantMessageCreatedAt(thread.id);
+    const localLatestMessageCreatedAt = this.findLastMessageCreatedAt(thread.id);
+    const raw = await requester.request("thread/read", {
+      threadId: thread.codex_thread_id,
+      includeTurns: true
+    });
+    const importedTurns = normalizeThreadRead(raw);
+    const remoteAssistantCreatedAt = lastAssistantCreatedAt(importedTurns);
+
+    if (
+      localAssistantCreatedAt !== null &&
+      remoteAssistantCreatedAt !== null &&
+      remoteAssistantCreatedAt <= localAssistantCreatedAt
+    ) {
+      return null;
+    }
+
+    const importId = randomUUID();
+    const now = Date.now();
+    const imported = this.database.sqlite.transaction(() => {
+      this.database.sqlite
+        .prepare(
+          `
+            INSERT INTO thread_imports (id, app_server_id, thread_id, raw_json, imported_at)
+            VALUES (?, ?, ?, ?, ?)
+          `
+        )
+        .run(importId, thread.app_server_id, thread.id, JSON.stringify(raw), now);
+
+      let insertedMessages = 0;
+
+      for (const importedTurn of importedTurns) {
+        const newMessages = importedTurn.messages.filter(
+          (message) => message.createdAt > localLatestMessageCreatedAt
+        );
+        if (newMessages.length === 0) {
+          continue;
+        }
+
+        const turnId = this.ensureImportedTurn(thread, importedTurn, importId, now);
+        for (const message of newMessages) {
+          this.database.sqlite
+            .prepare(
+              `
+                INSERT INTO messages (
+                  id,
+                  app_server_id,
+                  thread_id,
+                  turn_id,
+                  role,
+                  status,
+                  parts_json,
+                  imported_from_id,
+                  created_at,
+                  updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?)
+              `
+            )
+            .run(
+              randomUUID(),
+              thread.app_server_id,
+              thread.id,
+              turnId,
+              message.role,
+              JSON.stringify(message.parts),
+              importId,
+              message.createdAt,
+              message.createdAt
+            );
+          insertedMessages += 1;
+        }
+      }
+
+      if (insertedMessages === 0) {
+        this.database.sqlite
+          .prepare("DELETE FROM thread_imports WHERE id = ?")
+          .run(importId);
+      }
+
+      return insertedMessages;
+    })();
+
+    if (imported === 0) {
+      return null;
+    }
+
+    this.database.sqlite
+      .prepare("UPDATE threads SET updated_at = ? WHERE id = ?")
+      .run(now, thread.id);
+
+    const nextThread = this.getThread(thread.id);
+    const messages = this.listMessages(thread.id);
+    this.events.publish({
+      type: "thread.imported",
+      appServerId: nextThread.appServerId,
+      threadId: thread.id,
+      payload: {
+        thread: nextThread,
+        messageCount: messages.length,
+        incremental: true
+      }
+    });
+
+    return {
+      thread: nextThread,
+      imported: false,
+      messages
+    };
+  }
+
+  private ensureImportedTurn(
+    thread: ThreadRow,
+    importedTurn: ImportedTurn,
+    importId: string,
+    now: number
+  ): string {
+    const existingTurn = importedTurn.codexTurnId === null ? undefined : this.findTurnByCodexTurnId(thread.id, importedTurn.codexTurnId);
+    if (existingTurn !== undefined) {
+      return existingTurn.id;
+    }
+
+    const turnId = randomUUID();
+    this.database.sqlite
+      .prepare(
+        `
+          INSERT INTO turns (
+            id,
+            app_server_id,
+            thread_id,
+            codex_turn_id,
+            trigger_message_id,
+            status,
+            started_at,
+            completed_at,
+            error,
+            imported_from_id,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, NULL, 'completed', ?, ?, NULL, ?, ?, ?)
+        `
+      )
+      .run(
+        turnId,
+        thread.app_server_id,
+        thread.id,
+        importedTurn.codexTurnId,
+        importedTurn.createdAt,
+        importedTurn.createdAt,
+        importId,
+        importedTurn.createdAt,
+        now
+      );
+
+    return turnId;
+  }
+
+  private findTurnByCodexTurnId(threadId: string, codexTurnId: string): TurnRow | undefined {
+    return this.database.sqlite
+      .prepare(
+        `
+          SELECT id, codex_turn_id, created_at
+          FROM turns
+          WHERE thread_id = ? AND codex_turn_id = ?
+          ORDER BY created_at ASC
+          LIMIT 1
+        `
+      )
+      .get(threadId, codexTurnId) as TurnRow | undefined;
+  }
+
+  private findLastAssistantMessageCreatedAt(threadId: string): number | null {
+    const row = this.database.sqlite
+      .prepare(
+        `
+          SELECT created_at
+          FROM messages
+          WHERE thread_id = ? AND role = 'assistant'
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1
+        `
+      )
+      .get(threadId) as { readonly created_at: number } | undefined;
+
+    return row?.created_at ?? null;
+  }
+
+  private findLastMessageCreatedAt(threadId: string): number {
+    const row = this.database.sqlite
+      .prepare(
+        `
+          SELECT created_at
+          FROM messages
+          WHERE thread_id = ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1
+        `
+      )
+      .get(threadId) as { readonly created_at: number } | undefined;
+
+    return row?.created_at ?? Number.NEGATIVE_INFINITY;
+  }
+
   public async renameThread(
     threadId: string,
     requester: CodexRequester,
@@ -290,26 +519,15 @@ export class ThreadImportService {
     return row;
   }
 
-  private findAppServerStatus(appServerId: string): string {
-    const row = this.database.sqlite
-      .prepare("SELECT status FROM app_servers WHERE id = ? LIMIT 1")
-      .get(appServerId) as { readonly status: string } | undefined;
-
-    if (row === undefined) {
-      throw new NotFoundError("App server not found");
-    }
-
-    return row.status;
-  }
-
-  private toThreadDto(row: ThreadRow, appServerStatus: string): ThreadDto {
-    return toThreadDto(row, appServerStatus, buildThreadRuntime(this.database.sqlite, row), this.statusCache);
+  private toThreadDto(row: ThreadRow): ThreadDto {
+    return toThreadDto(row, buildThreadRuntime(this.database.sqlite, row), this.statusCache);
   }
 }
 
 function normalizeThreadRead(raw: JsonValue): ImportedTurn[] {
   if (isRecord(raw)) {
-    const turnItems = firstArray(raw.turns, raw.sessions);
+    const threadRecord = isRecord(raw.thread) ? raw.thread : undefined;
+    const turnItems = firstArray(raw.turns, raw.sessions, threadRecord?.turns, threadRecord?.sessions);
 
     if (turnItems !== undefined) {
       return turnItems.map((turn, index) => normalizeTurnRecord(turn, index));
@@ -338,20 +556,23 @@ function normalizeTurnRecord(value: JsonValue, index: number): ImportedTurn {
   }
 
   const messageItems = firstArray(value.messages, value.items, value.entries, value.events) ?? [];
-  const messages = messageItems.map((message, messageIndex) =>
-    normalizeMessageRecord(message, index * 1_000 + messageIndex)
-  );
   const createdAt = firstTimestamp(
     value.startedAt,
     value.started_at,
     value.createdAt,
-    value.created_at
+    value.created_at,
+    value.completedAt,
+    value.completed_at
+  );
+  const fallbackBaseCreatedAt = createdAt ?? Date.now() + index * 1_000;
+  const messages = messageItems.map((message, messageIndex) =>
+    normalizeMessageRecord(message, fallbackBaseCreatedAt + messageIndex)
   );
 
   return {
     codexTurnId: firstString(value.id, value.turnId, value.turn_id) ?? null,
     messages,
-    createdAt: createdAt ?? messages[0]?.createdAt ?? Date.now() + index
+    createdAt: createdAt ?? messages[0]?.createdAt ?? fallbackBaseCreatedAt
   };
 }
 
@@ -364,15 +585,29 @@ function extractMessageItems(raw: JsonValue): readonly JsonValue[] {
     throw new ProtocolError("Codex thread/read returned an invalid response");
   }
 
-  return firstArray(raw.messages, raw.items, raw.entries, raw.history, raw.data) ?? [];
+  const threadRecord = isRecord(raw.thread) ? raw.thread : undefined;
+  return (
+    firstArray(
+      raw.messages,
+      raw.items,
+      raw.entries,
+      raw.history,
+      raw.data,
+      threadRecord?.messages,
+      threadRecord?.items,
+      threadRecord?.entries,
+      threadRecord?.history,
+      threadRecord?.data
+    ) ?? []
+  );
 }
 
-function normalizeMessageRecord(value: JsonValue, index: number): ImportedMessage {
+function normalizeMessageRecord(value: JsonValue, fallbackCreatedAt: number): ImportedMessage {
   if (typeof value === "string") {
     return {
       role: "assistant",
       parts: [{ type: "markdown", text: value }],
-      createdAt: Date.now() + index
+      createdAt: fallbackCreatedAt
     };
   }
 
@@ -380,7 +615,7 @@ function normalizeMessageRecord(value: JsonValue, index: number): ImportedMessag
     return {
       role: "event",
       parts: [{ type: "event", eventType: "unsupported", raw: value }],
-      createdAt: Date.now() + index
+      createdAt: fallbackCreatedAt
     };
   }
 
@@ -389,7 +624,7 @@ function normalizeMessageRecord(value: JsonValue, index: number): ImportedMessag
     parts: normalizeParts(value),
     createdAt:
       firstTimestamp(value.createdAt, value.created_at, value.timestamp, value.time) ??
-      Date.now() + index
+      fallbackCreatedAt
   };
 }
 
@@ -499,7 +734,6 @@ function normalizePart(value: JsonValue): MessagePart[] {
 
 function toThreadDto(
   row: ThreadRow,
-  appServerStatus: string,
   runtime: ThreadRuntimeDto,
   statusCache?: ThreadStatusCache
 ): ThreadDto {
@@ -514,7 +748,7 @@ function toThreadDto(
     parentCodexThreadId: row.parent_codex_thread_id,
     agentName: row.agent_name,
     title: row.title,
-    status: appServerStatus === "online" ? (cachedStatus ?? "notLoaded") : "notLoaded",
+    status: cachedStatus ?? "notLoaded",
     cwd: row.cwd,
     isCurrent: row.is_current === 1,
     isGone: row.is_gone === 1,
@@ -562,10 +796,31 @@ function toMessageDto(row: MessageRow): ChatMessage {
   };
 }
 
+function lastAssistantCreatedAt(turns: readonly ImportedTurn[]): number | null {
+  let latest: number | null = null;
+
+  for (const turn of turns) {
+    for (const message of turn.messages) {
+      if (message.role !== "assistant") {
+        continue;
+      }
+      if (latest === null || message.createdAt > latest) {
+        latest = message.createdAt;
+      }
+    }
+  }
+
+  return latest;
+}
+
 function normalizeRole(value: string | undefined): ChatMessageRole {
   switch (value) {
     case "user":
+    case "userMessage":
+      return "user";
     case "assistant":
+    case "agentMessage":
+      return "assistant";
     case "tool":
     case "system":
     case "event":
@@ -598,10 +853,15 @@ function firstString(...values: readonly unknown[]): string | undefined {
 function firstTimestamp(...values: readonly unknown[]): number | undefined {
   for (const value of values) {
     if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
+      return normalizeTimestamp(value);
     }
 
     if (typeof value === "string" && value.trim().length > 0) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) {
+        return normalizeTimestamp(numeric);
+      }
+
       const parsed = Date.parse(value);
 
       if (!Number.isNaN(parsed)) {
@@ -611,6 +871,10 @@ function firstTimestamp(...values: readonly unknown[]): number | undefined {
   }
 
   return undefined;
+}
+
+function normalizeTimestamp(value: number): number {
+  return value >= 1_000_000_000 && value < 1_000_000_000_000 ? value * 1_000 : value;
 }
 
 function withThreadName(rawMetadataJson: string, name: string): unknown {

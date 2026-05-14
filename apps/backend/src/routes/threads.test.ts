@@ -205,7 +205,155 @@ describe("thread routes", () => {
       readJsonLines(path.join(workspace, "requests.ndjson")).filter(
         (request) => request.method === "thread/read"
       )
-    ).toEqual([expect.objectContaining({ params: { threadId: "thread-1" } })]);
+    ).toEqual([
+      expect.objectContaining({ params: { threadId: "thread-1", includeTurns: true } }),
+      expect.objectContaining({ params: { threadId: "thread-1", includeTurns: true } })
+    ]);
+  });
+
+  it("incrementally imports newer remote messages when an imported thread is reopened", async () => {
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    const scriptPath = createFakeCodexScript(tempDir, {
+      threadList: [{ id: "thread-1", name: "Mirror me" }],
+      threadReads: [
+        {
+          turns: [
+            {
+              id: "codex-turn-1",
+              started_at: 1_000,
+              messages: [
+                { role: "user", text: "Hello", created_at: 1_000 },
+                { role: "assistant", text: "Hi", created_at: 1_100 }
+              ]
+            }
+          ]
+        },
+        {
+          turns: [
+            {
+              id: "codex-turn-1",
+              started_at: 1_000,
+              messages: [
+                { role: "user", text: "Hello", created_at: 1_000 },
+                { role: "assistant", text: "Hi", created_at: 1_100 }
+              ]
+            },
+            {
+              id: "codex-turn-2",
+              started_at: 2_000,
+              messages: [
+                { role: "user", text: "Continue", created_at: 2_000 },
+                { role: "assistant", text: "Synced", created_at: 2_100 }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+    fs.mkdirSync(workspace);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace,
+        command: `${process.execPath} ${scriptPath}`
+      }
+    });
+    const appServerId = created.json<{ id: string }>().id;
+
+    await app.inject({ method: "POST", url: `/api/app-servers/${appServerId}/start` });
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/app-servers/${appServerId}/threads`
+    });
+    const threadId = listed.json<{ threads: readonly { id: string }[] }>().threads[0]?.id;
+
+    const first = await app.inject({ method: "POST", url: `/api/threads/${threadId}/import` });
+    const second = await app.inject({ method: "POST", url: `/api/threads/${threadId}/import` });
+
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ imported: true });
+    expect(second.statusCode).toBe(200);
+    expect(
+      second.json<{
+        readonly imported: boolean;
+        readonly messages: readonly { role: string; parts: readonly { text?: string }[] }[];
+      }>()
+    ).toMatchObject({
+      imported: false,
+      messages: [
+        { role: "user", parts: [{ text: "Hello" }] },
+        { role: "assistant", parts: [{ text: "Hi" }] },
+        { role: "user", parts: [{ text: "Continue" }] },
+        { role: "assistant", parts: [{ text: "Synced" }] }
+      ]
+    });
+    expect(countRows(app, "thread_imports")).toBe(2);
+    expect(countRows(app, "turns")).toBe(2);
+    expect(countRows(app, "messages")).toBe(4);
+  });
+
+  it("imports nested thread.turns payloads returned by Codex thread/read", async () => {
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    const scriptPath = createFakeCodexScript(tempDir, {
+      threadList: [{ id: "thread-1", name: "Nested payload" }],
+      threadRead: {
+        thread: {
+          turns: [
+            {
+              id: "codex-turn-1",
+              startedAt: 5_000,
+              completedAt: 5_100,
+              items: [
+                {
+                  type: "userMessage",
+                  content: [{ type: "text", text: "Outside question" }]
+                },
+                {
+                  type: "agentMessage",
+                  text: "Outside answer"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    });
+    fs.mkdirSync(workspace);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace,
+        command: `${process.execPath} ${scriptPath}`
+      }
+    });
+    const appServerId = created.json<{ id: string }>().id;
+
+    await app.inject({ method: "POST", url: `/api/app-servers/${appServerId}/start` });
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/app-servers/${appServerId}/threads`
+    });
+    const threadId = listed.json<{ threads: readonly { id: string }[] }>().threads[0]?.id;
+
+    const imported = await app.inject({ method: "POST", url: `/api/threads/${threadId}/import` });
+
+    expect(imported.statusCode).toBe(200);
+    expect(
+      imported.json<{
+        readonly messages: readonly { role: string; createdAt: number; parts: readonly { text?: string }[] }[];
+      }>().messages
+    ).toMatchObject([
+      { role: "user", createdAt: 5_000, parts: [{ text: "Outside question" }] },
+      { role: "assistant", createdAt: 5_001, parts: [{ text: "Outside answer" }] }
+    ]);
   });
 
   it("returns queue status scoped to a thread", async () => {
@@ -339,7 +487,8 @@ function createFakeCodexScript(
   tempDir: string,
   options: {
     readonly threadList: readonly unknown[];
-    readonly threadRead: unknown;
+    readonly threadRead?: unknown;
+    readonly threadReads?: readonly unknown[];
   }
 ): string {
   const scriptPath = path.join(tempDir, `fake-codex-${Math.random().toString(16).slice(2)}.mjs`);
@@ -353,7 +502,9 @@ function createFakeCodexScript(
       const lines = readline.createInterface({ input: process.stdin });
       const requestsPath = path.join(process.cwd(), "requests.ndjson");
       const threadList = ${JSON.stringify(options.threadList)};
-      const threadRead = ${JSON.stringify(options.threadRead)};
+      const threadRead = ${JSON.stringify(options.threadRead ?? null)};
+      const threadReads = ${JSON.stringify(options.threadReads ?? [])};
+      let threadReadIndex = 0;
 
       for await (const line of lines) {
         const request = JSON.parse(line);
@@ -372,10 +523,14 @@ function createFakeCodexScript(
             result: { threads: threadList }
           }) + "\\n");
         } else if (request.method === "thread/read") {
+          const result = threadReads.length > 0
+            ? threadReads[Math.min(threadReadIndex, threadReads.length - 1)]
+            : threadRead;
+          threadReadIndex += 1;
           process.stdout.write(JSON.stringify({
             jsonrpc: "2.0",
             id: request.id,
-            result: threadRead
+            result
           }) + "\\n");
         }
       }

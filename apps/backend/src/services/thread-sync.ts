@@ -41,10 +41,6 @@ type AppServerWorkspaceRow = {
   readonly workspace: string;
 };
 
-type AppServerRuntimeRow = {
-  readonly status: string;
-};
-
 type CodexThread = {
   readonly codexThreadId: string;
   readonly threadName: string;
@@ -73,7 +69,6 @@ export class ThreadSyncService {
 
   public listCurrent(appServerId: string): ThreadDto[] {
     this.ensureAppServerExists(appServerId);
-    const appServerStatus = this.getAppServerStatus(appServerId);
 
     const rows = this.database.sqlite
       .prepare(
@@ -86,7 +81,7 @@ export class ThreadSyncService {
       )
       .all(appServerId) as ThreadRow[];
 
-    return rows.map((row) => this.toDto(row, appServerStatus));
+    return rows.map((row) => this.toDto(row));
   }
 
   public getById(threadId: string): ThreadDto {
@@ -98,12 +93,12 @@ export class ThreadSyncService {
       throw new NotFoundError("Thread not found");
     }
 
-    return this.toDto(row, this.getAppServerStatus(row.app_server_id));
+    return this.toDto(row);
   }
 
   public findByCodexThreadId(appServerId: string, codexThreadId: string): ThreadDto | null {
     const row = this.findByCodexThreadIdRow(appServerId, codexThreadId);
-    return row === undefined ? null : this.toDto(row, this.getAppServerStatus(appServerId));
+    return row === undefined ? null : this.toDto(row);
   }
 
   public async materializeCodexThread(
@@ -144,6 +139,7 @@ export class ThreadSyncService {
     const before = this.currentFingerprint(appServerId);
     const seenCodexIds = this.upsertThreads(appServerId, codexThreads);
     this.markMissingGone(appServerId, seenCodexIds);
+    this.syncStatusesFromCodexThreads(appServerId, codexThreads);
     const threads = this.listCurrent(appServerId);
     const changed = before !== this.currentFingerprint(appServerId);
 
@@ -180,7 +176,7 @@ export class ThreadSyncService {
     }
 
     this.statusCache.set(thread.id, "idle");
-    const dto = this.toDto(thread, this.getAppServerStatus(appServerId));
+    const dto = this.toDto(thread);
     this.events.publish({
       type: "thread.list_changed",
       appServerId,
@@ -213,7 +209,7 @@ export class ThreadSyncService {
     }
 
     this.statusCache.set(resumed.id, "idle");
-    const dto = this.toDto(resumed, this.getAppServerStatus(appServerId));
+    const dto = this.toDto(resumed);
     this.events.publish({
       type: "thread.list_changed",
       appServerId,
@@ -382,6 +378,16 @@ export class ThreadSyncService {
 
   private markMissingGone(appServerId: string, seenCodexIds: ReadonlySet<string>): void {
     const now = Date.now();
+    const rows = this.database.sqlite
+      .prepare(
+        `
+          SELECT id
+          FROM threads
+          WHERE app_server_id = ? AND is_current = 1
+        `
+      )
+      .all(appServerId) as { readonly id: string }[];
+    const activeIds = new Set(rows.map((row) => row.id));
 
     if (seenCodexIds.size === 0) {
       this.database.sqlite
@@ -389,10 +395,11 @@ export class ThreadSyncService {
           `
             UPDATE threads
             SET is_current = 0, is_gone = 1, updated_at = ?
-            WHERE app_server_id = ? AND is_current = 1
-          `
+          WHERE app_server_id = ? AND is_current = 1
+        `
         )
         .run(now, appServerId);
+      this.statusCache.markAllNotLoaded([...activeIds]);
       return;
     }
 
@@ -408,6 +415,43 @@ export class ThreadSyncService {
         `
       )
       .run(now, appServerId, ...seenCodexIds);
+
+    const goneRows = this.database.sqlite
+      .prepare(
+        `
+          SELECT id
+          FROM threads
+          WHERE app_server_id = ?
+            AND is_current = 0
+            AND is_gone = 1
+        `
+      )
+      .all(appServerId) as { readonly id: string }[];
+    this.statusCache.markAllNotLoaded(goneRows.map((row) => row.id));
+  }
+
+  private syncStatusesFromCodexThreads(
+    appServerId: string,
+    codexThreads: readonly CodexThread[]
+  ): void {
+    const rows = this.database.sqlite
+      .prepare(
+        `
+          SELECT id, codex_thread_id
+          FROM threads
+          WHERE app_server_id = ? AND is_current = 1
+        `
+      )
+      .all(appServerId) as {
+      readonly id: string;
+      readonly codex_thread_id: string;
+    }[];
+    const statusByCodexThreadId = new Map(
+      codexThreads.map((thread) => [thread.codexThreadId, thread.status ?? "idle"] as const)
+    );
+    this.statusCache.setMany(
+      rows.map((row) => [row.id, statusByCodexThreadId.get(row.codex_thread_id) ?? "idle"] as const)
+    );
   }
 
   private currentFingerprint(appServerId: string): string {
@@ -456,20 +500,8 @@ export class ThreadSyncService {
     return row.workspace;
   }
 
-  private getAppServerStatus(appServerId: string): string {
-    const row = this.database.sqlite
-      .prepare("SELECT status FROM app_servers WHERE id = ? LIMIT 1")
-      .get(appServerId) as AppServerRuntimeRow | undefined;
-
-    if (row === undefined) {
-      throw new NotFoundError("App server not found");
-    }
-
-    return row.status;
-  }
-
-  private toDto(row: ThreadRow, appServerStatus: string): ThreadDto {
-    return toDto(row, appServerStatus, buildThreadRuntime(this.database.sqlite, row), this.statusCache);
+  private toDto(row: ThreadRow): ThreadDto {
+    return toDto(row, buildThreadRuntime(this.database.sqlite, row), this.statusCache);
   }
 }
 
@@ -650,7 +682,7 @@ function withThreadName(value: JsonValue, name: string): JsonValue {
   };
 }
 
-function toDto(row: ThreadRow, appServerStatus: string, runtime: ThreadRuntimeDto, statusCache?: ThreadStatusCache): ThreadDto {
+function toDto(row: ThreadRow, runtime: ThreadRuntimeDto, statusCache?: ThreadStatusCache): ThreadDto {
   const cachedStatus = statusCache?.get(row.id);
   return {
     id: row.id,
@@ -662,7 +694,7 @@ function toDto(row: ThreadRow, appServerStatus: string, runtime: ThreadRuntimeDt
     parentCodexThreadId: row.parent_codex_thread_id,
     agentName: row.agent_name,
     title: row.title,
-    status: appServerStatus === "online" ? (cachedStatus ?? "notLoaded") : "notLoaded",
+    status: cachedStatus ?? "notLoaded",
     cwd: row.cwd,
     isCurrent: row.is_current === 1,
     isGone: row.is_gone === 1,

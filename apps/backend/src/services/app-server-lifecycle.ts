@@ -157,10 +157,12 @@ export class AppServerLifecycleRegistry {
 
     if (entry === undefined) {
       if (appServer.status === "offline") {
+        this.markAppServerThreadsNotLoaded(id);
         return appServer;
       }
 
       const offline = this.appServers.setStatus(id, "offline", { lastError: null });
+      this.markAppServerThreadsNotLoaded(id);
       this.publishStatus(offline);
       return offline;
     }
@@ -173,6 +175,7 @@ export class AppServerLifecycleRegistry {
     this.entries.delete(id);
 
     const offline = this.appServers.setStatus(id, "offline", { lastError: null });
+    this.markAppServerThreadsNotLoaded(id);
     this.publishStatus(offline);
     return offline;
   }
@@ -245,6 +248,7 @@ export class AppServerLifecycleRegistry {
     const lastError =
       status === "error" ? `Codex app-server exited unexpectedly${formatExit(exit)}` : null;
 
+    this.markAppServerThreadsNotLoaded(entry.appServerId);
     this.publishStatus(
       this.appServers.setStatus(entry.appServerId, status, {
         lastError,
@@ -311,6 +315,19 @@ export class AppServerLifecycleRegistry {
         message: errorMessage(error)
       }
     });
+  }
+
+  private markAppServerThreadsNotLoaded(appServerId: string): void {
+    const rows = this.database.sqlite
+      .prepare(
+        `
+          SELECT id
+          FROM threads
+          WHERE app_server_id = ?
+        `
+      )
+      .all(appServerId) as { readonly id: string }[];
+    this.statusCache.markAllNotLoaded(rows.map((row) => row.id));
   }
 
   private recordProtocolError(

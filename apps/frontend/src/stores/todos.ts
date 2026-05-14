@@ -64,6 +64,56 @@ export const useTodoStore = defineStore("todos", {
     async reorder(ids: readonly string[]): Promise<void> {
       const items = await apiClient.reorderTodos({ ids });
       this.items = [...items];
+    },
+
+    async moveTodo(
+      id: string,
+      options: {
+        readonly category: string | null;
+        readonly beforeId?: string | null;
+      }
+    ): Promise<void> {
+      const source = this.items.find((item) => item.id === id);
+      if (source === undefined) {
+        return;
+      }
+
+      const targetCategory = options.category;
+      if ((source.category ?? null) !== targetCategory) {
+        await this.update(id, { category: targetCategory });
+      }
+
+      const ids = this.items.map((item) => item.id);
+      const sourceIndex = ids.indexOf(id);
+      if (sourceIndex === -1) {
+        return;
+      }
+
+      ids.splice(sourceIndex, 1);
+
+      const beforeId = options.beforeId ?? null;
+      if (beforeId !== null) {
+        const targetIndex = ids.indexOf(beforeId);
+        if (targetIndex !== -1) {
+          ids.splice(targetIndex, 0, id);
+          await this.reorder(ids);
+          return;
+        }
+      }
+
+      const categoryItems = this.items.filter(
+        (item) => item.id !== id && (item.category ?? null) === targetCategory
+      );
+      const lastCategoryItem = categoryItems.at(-1);
+      if (lastCategoryItem === undefined) {
+        ids.push(id);
+        await this.reorder(ids);
+        return;
+      }
+
+      const lastCategoryIndex = ids.indexOf(lastCategoryItem.id);
+      ids.splice(lastCategoryIndex + 1, 0, id);
+      await this.reorder(ids);
     }
   }
 });

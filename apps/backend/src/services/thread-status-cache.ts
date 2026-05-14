@@ -19,6 +19,12 @@ export class ThreadStatusCache {
     this.statuses.delete(threadId);
   }
 
+  public setMany(entries: ReadonlyArray<readonly [threadId: string, status: string]>): void {
+    for (const [threadId, status] of entries) {
+      this.statuses.set(threadId, status);
+    }
+  }
+
   /**
    * Returns the cached status, or `null` if no entry exists
    * (meaning the thread has not been loaded since backend start).
@@ -33,6 +39,12 @@ export class ThreadStatusCache {
       if (dto.status !== null && dto.status !== "notLoaded") {
         this.statuses.set(dto.id, dto.status);
       }
+    }
+  }
+
+  public markAllNotLoaded(threadIds: readonly string[]): void {
+    for (const threadId of threadIds) {
+      this.statuses.set(threadId, "notLoaded");
     }
   }
 }

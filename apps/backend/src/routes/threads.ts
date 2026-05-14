@@ -13,7 +13,7 @@ import type {
 } from "@agentmesh/shared";
 
 import { CodexEventService } from "../services/codex-events.js";
-import { RequestValidationError } from "../errors.js";
+import { OfflineError, RequestValidationError } from "../errors.js";
 import { ThreadImportService } from "../services/thread-import.js";
 import { ThreadQueueService } from "../services/thread-queue.js";
 import { ThreadStopService } from "../services/thread-stop.js";
@@ -105,10 +105,15 @@ export async function registerThreadRoutes(app: FastifyInstance): Promise<void> 
     async (request): Promise<ThreadImportResponse> => {
       const { threadId } = request.params as z.infer<typeof threadParamsSchema>;
       const thread = service.getThread(threadId);
-      const requester =
-        thread.importedAt === null
-          ? app.appServerLifecycle.getTransport(thread.appServerId)
-          : undefined;
+      let requester;
+      try {
+        requester = app.appServerLifecycle.getTransport(thread.appServerId);
+      } catch (error) {
+        if (!(error instanceof OfflineError)) {
+          throw error;
+        }
+        requester = undefined;
+      }
 
       return service.importThread(threadId, requester);
     }

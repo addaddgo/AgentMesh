@@ -67,6 +67,17 @@ export const useScheduledMessageStore = defineStore("scheduledMessages", {
       }
     },
 
+    async remove(id: string): Promise<boolean> {
+      try {
+        await apiClient.deleteScheduledMessage(id);
+        this.items = this.items.filter((existing) => existing.id !== id);
+        return true;
+      } catch (error) {
+        notifyError(error, "Failed to delete scheduled message");
+        return false;
+      }
+    },
+
     upsert(item: ScheduledMessageDto): void {
       const next = [...this.items];
       const index = next.findIndex((existing) => existing.id === item.id);
@@ -76,6 +87,10 @@ export const useScheduledMessageStore = defineStore("scheduledMessages", {
         next.splice(index, 1, item);
       }
       this.items = sortScheduledMessages(next);
+    },
+
+    removeLocal(id: string): void {
+      this.items = this.items.filter((existing) => existing.id !== id);
     }
   }
 });

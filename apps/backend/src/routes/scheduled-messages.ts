@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import type {
   ScheduledMessageCancelResponse,
+  ScheduledMessageDeleteResponse,
   ScheduledMessageCreateRequest,
   ScheduledMessageItemResponse,
   ScheduledMessageListResponse,
@@ -68,6 +69,16 @@ export async function registerScheduledMessageRoutes(app: FastifyInstance): Prom
     async (request): Promise<ScheduledMessageCancelResponse> => {
       const { id } = request.params as z.infer<typeof scheduledMessageParamsSchema>;
       return { item: app.scheduledMessageService.cancel(id) };
+    }
+  );
+
+  app.delete(
+    "/api/scheduled-messages/:id",
+    { preHandler: validateParams(scheduledMessageParamsSchema) },
+    async (request): Promise<ScheduledMessageDeleteResponse> => {
+      const { id } = request.params as z.infer<typeof scheduledMessageParamsSchema>;
+      app.scheduledMessageService.delete(id);
+      return { success: true };
     }
   );
 }

@@ -230,6 +230,13 @@ textarea {
   font: inherit;
 }
 
+input,
+textarea,
+.el-input__inner,
+.el-textarea__inner {
+  caret-color: var(--accent-primary);
+}
+
 .el-button {
   border-radius: 0.78rem;
   box-shadow: none;
@@ -1325,10 +1332,16 @@ textarea {
   background: transparent;
   color: var(--warm-ink);
   font-size: 0.95rem;
+  caret-color: var(--accent-primary);
 }
 
 .markdown-editor .cm-content {
   padding: 0.7rem 0.8rem;
+}
+
+.markdown-editor .cm-cursor,
+.markdown-editor .cm-dropCursor {
+  border-left: 3px solid var(--accent-primary);
 }
 
 .markdown-editor .cm-activeLine,

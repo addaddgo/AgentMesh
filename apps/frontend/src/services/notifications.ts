@@ -1,4 +1,4 @@
-import type { AppServerDto, ThreadDto } from "@agentmesh/shared";
+import type { AppServerDto, ApprovalDto, ThreadDto } from "@agentmesh/shared";
 
 export function browserNotificationsEnabled(): boolean {
   return typeof window !== "undefined" && "Notification" in window;
@@ -32,5 +32,22 @@ export function notifyThreadReady(thread: ThreadDto, appServer: AppServerDto): v
   new window.Notification("Thread ready for input", {
     body: `${appServer.name} / ${thread.threadName} can accept input again.`,
     tag: `thread-ready:${thread.id}`
+  });
+}
+
+export function notifyApprovalRequired(
+  approval: ApprovalDto,
+  thread: ThreadDto | null,
+  appServer: AppServerDto | null
+): void {
+  if (approval.status !== "pending" || browserNotificationPermission() !== "granted") {
+    return;
+  }
+
+  const workspaceLabel = appServer?.name ?? "Workspace";
+  const threadLabel = thread?.threadName ?? "thread";
+  new window.Notification("Approval required", {
+    body: `${workspaceLabel} / ${threadLabel} is waiting for permission.`,
+    tag: `approval-required:${approval.id}`
   });
 }

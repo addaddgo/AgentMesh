@@ -237,7 +237,9 @@ export class ApprovalService {
 
   private createOrUpdatePending(input: ApprovalRequestInput): ApprovalDto {
     const existing = this.database.sqlite
-      .prepare("SELECT * FROM approvals WHERE app_server_id = ? AND codex_request_id = ?")
+      .prepare(
+        "SELECT * FROM approvals WHERE app_server_id = ? AND codex_request_id = ? AND status = 'pending'"
+      )
       .get(input.appServerId, String(input.codexRequestId)) as ApprovalRow | undefined;
 
     if (existing !== undefined) {

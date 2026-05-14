@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import type Database from "better-sqlite3";
 import { z } from "zod";
 
 import type {
@@ -137,42 +138,13 @@ export async function registerThreadRoutes(app: FastifyInstance): Promise<void> 
       const { threadId } = request.params as z.infer<typeof threadParamsSchema>;
       const { command, option } = request.body as z.infer<typeof commandApplySchema>;
       const thread = service.getThread(threadId);
-      const transport = app.appServerLifecycle.getTransport(thread.appServerId);
-      const settings = await resolveCommandSettings(transport, command, option, thread.cwd);
-      const now = Date.now();
-
-      app.database.sqlite
-        .prepare(
-          `
-            INSERT INTO thread_settings (
-              thread_id,
-              model,
-              effort,
-              approval_policy_json,
-              sandbox_policy_json,
-              collaboration_mode_json,
-              updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(thread_id) DO UPDATE SET
-              model = COALESCE(excluded.model, thread_settings.model),
-              effort = COALESCE(excluded.effort, thread_settings.effort),
-              approval_policy_json = COALESCE(excluded.approval_policy_json, thread_settings.approval_policy_json),
-              sandbox_policy_json = COALESCE(excluded.sandbox_policy_json, thread_settings.sandbox_policy_json),
-              collaboration_mode_json = COALESCE(excluded.collaboration_mode_json, thread_settings.collaboration_mode_json),
-              updated_at = excluded.updated_at
-          `
-        )
-        .run(
-          threadId,
-          settings.model ?? null,
-          settings.effort ?? null,
-          settings.approvalPolicy === undefined ? null : JSON.stringify(settings.approvalPolicy),
-          settings.sandboxPolicy === undefined ? null : JSON.stringify(settings.sandboxPolicy),
-          settings.collaborationMode === undefined
-            ? null
-            : JSON.stringify(settings.collaborationMode),
-          now
-        );
+      const settings = await resolveCommandSettings(
+        () => app.appServerLifecycle.getTransport(thread.appServerId),
+        command,
+        option,
+        thread.cwd
+      );
+      saveThreadSettings(app.database.sqlite, threadId, settings, Date.now());
 
       return { applied: true };
     }
@@ -187,26 +159,85 @@ type CommandSettings = {
   readonly collaborationMode?: unknown;
 };
 
+function saveThreadSettings(
+  sqlite: Database.Database,
+  threadId: string,
+  settings: CommandSettings,
+  now: number
+): void {
+  const assignments: string[] = [];
+  const values: unknown[] = [];
+
+  const setColumn = (column: string, value: unknown): void => {
+    assignments.push(`${column} = ?`);
+    values.push(value);
+  };
+
+  if ("model" in settings) {
+    setColumn("model", settings.model ?? null);
+  }
+  if ("effort" in settings) {
+    setColumn("effort", settings.effort ?? null);
+  }
+  if ("approvalPolicy" in settings) {
+    setColumn("approval_policy_json", serializeJsonSetting(settings.approvalPolicy));
+  }
+  if ("sandboxPolicy" in settings) {
+    setColumn("sandbox_policy_json", serializeJsonSetting(settings.sandboxPolicy));
+  }
+  if ("collaborationMode" in settings) {
+    setColumn("collaboration_mode_json", serializeJsonSetting(settings.collaborationMode));
+  }
+
+  const transaction = sqlite.transaction(() => {
+    sqlite
+      .prepare(
+        `
+          INSERT INTO thread_settings (thread_id, updated_at)
+          VALUES (?, ?)
+          ON CONFLICT(thread_id) DO NOTHING
+        `
+      )
+      .run(threadId, now);
+
+    sqlite
+      .prepare(
+        `
+          UPDATE thread_settings
+          SET ${[...assignments, "updated_at = ?"].join(", ")}
+          WHERE thread_id = ?
+        `
+      )
+      .run(...values, now, threadId);
+  });
+
+  transaction();
+}
+
+function serializeJsonSetting(value: unknown): string | null {
+  return value === undefined ? null : JSON.stringify(value);
+}
+
 type CodexRequester = {
   request(method: string, params?: unknown): Promise<unknown>;
 };
 
 async function resolveCommandSettings(
-  transport: CodexRequester,
+  transport: () => CodexRequester,
   command: string,
   option: string,
   cwd: string | null
 ): Promise<CommandSettings> {
   switch (normalizeSlashCommand(command)) {
     case "/model":
-      return resolveModelSettings(transport, option);
+      return resolveModelSettings(transport(), option);
     case "/permissions":
     case "/permission":
       return resolvePermissionSettings(option, cwd);
     case "/collab":
-      return resolveCollaborationSettings(transport, option);
+      return resolveCollaborationSettings(transport(), option);
     case "/plan":
-      return resolvePlanSettings(transport);
+      return resolvePlanSettings(transport());
     default:
       throw new RequestValidationError(`Unsupported slash command: ${command}`);
   }

@@ -230,6 +230,103 @@ describe("thread routes", () => {
       ]
     });
   });
+
+  it("replaces permission settings when switching from read only back to default", async () => {
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    const scriptPath = createFakeCodexScript(tempDir, {
+      threadList: [{ id: "thread-1", name: "Permission thread", cwd: workspace }],
+      threadRead: { messages: [] }
+    });
+    fs.mkdirSync(workspace);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace,
+        command: `${process.execPath} ${scriptPath}`
+      }
+    });
+    const appServerId = created.json<{ id: string }>().id;
+
+    await app.inject({ method: "POST", url: `/api/app-servers/${appServerId}/start` });
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/app-servers/${appServerId}/threads`
+    });
+    const threadId = listed.json<{ threads: readonly { id: string }[] }>().threads[0]?.id;
+    expect(threadId).toBeDefined();
+
+    const readOnly = await app.inject({
+      method: "POST",
+      url: `/api/threads/${threadId}/codex-command-selection`,
+      payload: { command: "/permissions", option: "Read Only" }
+    });
+    expect(readOnly.statusCode).toBe(200);
+
+    const readOnlyDetails = await app.inject({
+      method: "GET",
+      url: `/api/threads/${threadId}`
+    });
+    expect(readOnlyDetails.json()).toMatchObject({
+      thread: { runtime: { permissionMode: "Read Only" } }
+    });
+
+    const defaultPermission = await app.inject({
+      method: "POST",
+      url: `/api/threads/${threadId}/codex-command-selection`,
+      payload: { command: "/permissions", option: "Default" }
+    });
+    expect(defaultPermission.statusCode).toBe(200);
+
+    const defaultDetails = await app.inject({
+      method: "GET",
+      url: `/api/threads/${threadId}`
+    });
+    expect(defaultDetails.json()).toMatchObject({
+      thread: { runtime: { permissionMode: "Default" } }
+    });
+
+    const stored = app.database.sqlite
+      .prepare("SELECT approval_policy_json, sandbox_policy_json FROM thread_settings WHERE thread_id = ?")
+      .get(threadId) as {
+      readonly approval_policy_json: string;
+      readonly sandbox_policy_json: string;
+    };
+    expect(JSON.parse(stored.approval_policy_json)).toBe("on-request");
+    expect(JSON.parse(stored.sandbox_policy_json)).toEqual({
+      type: "workspaceWrite",
+      writableRoots: [workspace],
+      networkAccess: false,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false
+    });
+  });
+
+  it("applies permission settings without a live app-server transport", async () => {
+    const { app } = await setup();
+    const appServerId = insertAppServer(app);
+    const threadId = insertThread(app, appServerId, "offline-thread");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/threads/${threadId}/codex-command-selection`,
+      payload: { command: "/permissions", option: "Default" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ applied: true });
+
+    const details = await app.inject({
+      method: "GET",
+      url: `/api/threads/${threadId}`
+    });
+    expect(details.json()).toMatchObject({
+      thread: { runtime: { permissionMode: "Default" } }
+    });
+  });
 });
 
 async function setup(): Promise<TestBackend> {

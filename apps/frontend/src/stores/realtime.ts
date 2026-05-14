@@ -11,7 +11,7 @@ import { defineStore } from "pinia";
 
 import { apiClient } from "../api/client";
 import { eventBus } from "../services/eventBus";
-import { notifyThreadReady } from "../services/notifications";
+import { notifyApprovalRequired, notifyThreadReady } from "../services/notifications";
 import { sseClient, type SseConnectionState } from "../services/sse";
 import { useAppServerStore } from "./appServers";
 import { useApprovalStore } from "./approvals";
@@ -28,6 +28,7 @@ type RealtimeState = {
   started: boolean;
   _unsubDispatchers: (() => void) | null;
   notifiedFailedTurnIds: Record<string, true>;
+  notifiedApprovalIds: Record<string, true>;
 };
 
 export const useRealtimeStore = defineStore("realtime", {
@@ -35,7 +36,8 @@ export const useRealtimeStore = defineStore("realtime", {
     connected: false,
     started: false,
     _unsubDispatchers: null,
-    notifiedFailedTurnIds: {}
+    notifiedFailedTurnIds: {},
+    notifiedApprovalIds: {}
   }),
 
   actions: {
@@ -211,6 +213,9 @@ export const useRealtimeStore = defineStore("realtime", {
           const approvals = useApprovalStore();
           if (approval !== null) {
             approvals.upsert(approval);
+            if (event.type === "approval.created") {
+              this.notifyApprovalCreated(approval);
+            }
             this.evaluateReadyTransition(approval.threadId);
           } else {
             await approvals.load();
@@ -292,6 +297,21 @@ export const useRealtimeStore = defineStore("realtime", {
           : `${appServer?.name ?? "AppServer"} / ${thread.threadName}${thread.agentName === null ? "" : ` / ${thread.agentName}`}`;
 
       notifyError(turn.error ?? "Codex turn failed.", threadLabel);
+    },
+
+    notifyApprovalCreated(approval: ApprovalDto): void {
+      if (approval.status !== "pending" || this.notifiedApprovalIds[approval.id] === true) {
+        return;
+      }
+
+      this.notifiedApprovalIds[approval.id] = true;
+      const threads = useThreadStore();
+      const appServers = useAppServerStore();
+      notifyApprovalRequired(
+        approval,
+        threads.threadById(approval.threadId),
+        appServers.appServers.find((candidate) => candidate.id === approval.appServerId) ?? null
+      );
     }
   }
 });

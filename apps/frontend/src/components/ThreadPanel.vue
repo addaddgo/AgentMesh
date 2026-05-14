@@ -689,7 +689,7 @@ const resumeActionLabel = computed(() =>
 const fileSearchEmptyState = computed(() => {
   const query = fileSearchQuery.value.trim();
   if (query.length === 0) {
-    return "No top-level directories";
+    return "No workspace entries";
   }
   if (query.endsWith("/")) {
     return "No entries in this directory";
@@ -930,11 +930,9 @@ watch(
           }
 
           fileSearchResults.value =
-            normalizedQuery.length === 0
-              ? entries.filter((entry) => entry.kind === "directory")
-              : normalizedQuery.endsWith("/")
-                ? entries
-                : rankWorkspaceSearchResults(entries, normalizedQuery);
+            normalizedQuery.length === 0 || normalizedQuery.endsWith("/")
+              ? entries
+              : rankWorkspaceSearchResults(entries, normalizedQuery);
           fileSearchSelectedIndex.value = 0;
         })
         .catch((error: unknown) => {
@@ -1023,7 +1021,11 @@ async function completeWorkspacePath(
     return null;
   }
 
-  const entries = await apiClient.listWorkspaceEntries(appServerId, token.slice(1));
+  const query = token.slice(1).trim();
+  const entries =
+    query.length === 0 || query.endsWith("/")
+      ? await apiClient.listWorkspaceEntries(appServerId, query)
+      : rankWorkspaceSearchResults(await apiClient.searchWorkspaceFiles(appServerId, query), query);
   return {
     from,
     options: entries.map(workspaceEntryCompletion),

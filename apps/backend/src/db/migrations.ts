@@ -353,6 +353,33 @@ export const MIGRATIONS: readonly Migration[] = [
         ADD COLUMN active_observation_skills_json TEXT NOT NULL DEFAULT '[]';
     `
   },
+  {
+    id: "0008_scheduled_messages",
+    sql: `
+      CREATE TABLE IF NOT EXISTS scheduled_messages (
+        id TEXT PRIMARY KEY NOT NULL,
+        app_server_id TEXT NOT NULL REFERENCES app_servers(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        text TEXT NOT NULL,
+        run_at INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('scheduled', 'sending', 'sent', 'failed', 'canceled')),
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        last_attempt_at INTEGER,
+        sent_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+        sent_turn_id TEXT REFERENCES turns(id) ON DELETE SET NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS scheduled_messages_status_run_at_idx
+        ON scheduled_messages (status, run_at);
+      CREATE INDEX IF NOT EXISTS scheduled_messages_thread_idx
+        ON scheduled_messages (thread_id, created_at);
+      CREATE INDEX IF NOT EXISTS scheduled_messages_app_server_idx
+        ON scheduled_messages (app_server_id, created_at);
+    `
+  },
 
 ];
 

@@ -25,10 +25,23 @@
 
     <main class="thread-canvas">
       <div
-        v-if="threadLeaves.length > 0 || todoPanelVisible || statsPanelVisible || accountLimitsPanelVisible"
+        v-if="
+          threadLeaves.length > 0 ||
+          todoPanelVisible ||
+          statsPanelVisible ||
+          accountLimitsPanelVisible ||
+          scheduledMessagesPanelVisible
+        "
         class="thread-card-flow"
       >
-        <template v-if="todoPanelVisible || statsPanelVisible || accountLimitsPanelVisible">
+        <template
+          v-if="
+            todoPanelVisible ||
+            statsPanelVisible ||
+            accountLimitsPanelVisible ||
+            scheduledMessagesPanelVisible
+          "
+        >
           <TodoPanel v-if="todoPanelVisible" key="todo" class="thread-card" @close="todoPanelVisible = false" />
           <WorkspaceStatsPanel v-if="statsPanelVisible" key="stats" class="thread-card" @close="statsPanelVisible = false" />
           <AccountLimitsPanel
@@ -36,6 +49,12 @@
             key="account-limits"
             class="thread-card"
             @close="accountLimitsPanelVisible = false"
+          />
+          <ScheduledMessagesPanel
+            v-if="scheduledMessagesPanelVisible"
+            key="scheduled-messages"
+            class="thread-card"
+            @close="scheduledMessagesPanelVisible = false"
           />
         </template>
         <template v-for="group in workspaceGroups" :key="group.appServerId">
@@ -196,6 +215,10 @@
             <span class="tool-card-name">Account Limits</span>
             <el-button size="small" type="primary" :icon="Plus" circle title="Add" aria-label="Add Account Limits" @click="addTool('account-limits')" />
           </div>
+          <div class="tool-card">
+            <span class="tool-card-name">Scheduled Messages</span>
+            <el-button size="small" type="primary" :icon="Plus" circle title="Add" aria-label="Add Scheduled Messages" @click="addTool('scheduled-messages')" />
+          </div>
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -246,6 +269,7 @@ import { computed, onMounted, ref, watch } from "vue";
 
 import ThreadPanel from "../components/ThreadPanel.vue";
 import AccountLimitsPanel from "../components/AccountLimitsPanel.vue";
+import ScheduledMessagesPanel from "../components/ScheduledMessagesPanel.vue";
 import TodoPanel from "../components/TodoPanel.vue";
 import WorkspaceStatsPanel from "../components/WorkspaceStatsPanel.vue";
 import { apiClient } from "../api/client";
@@ -292,14 +316,20 @@ const accountLimitsPanelVisible = ref(localStorage.getItem("accountLimitsPanelVi
 watch(accountLimitsPanelVisible, (visible) => {
   localStorage.setItem("accountLimitsPanelVisible", String(visible));
 });
+const scheduledMessagesPanelVisible = ref(localStorage.getItem("scheduledMessagesPanelVisible") === "true");
+watch(scheduledMessagesPanelVisible, (visible) => {
+  localStorage.setItem("scheduledMessagesPanelVisible", String(visible));
+});
 
-function addTool(tool: "todo" | "stats" | "account-limits"): void {
+function addTool(tool: "todo" | "stats" | "account-limits" | "scheduled-messages"): void {
   if (tool === "todo") {
     todoPanelVisible.value = true;
   } else if (tool === "stats") {
     statsPanelVisible.value = true;
-  } else {
+  } else if (tool === "account-limits") {
     accountLimitsPanelVisible.value = true;
+  } else {
+    scheduledMessagesPanelVisible.value = true;
   }
   addDialogOpen.value = false;
 }

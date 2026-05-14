@@ -13,6 +13,7 @@ import { registerEventRoutes } from "./routes/events.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMessageRoutes } from "./routes/messages.js";
 import { registerMcpRoutes } from "./routes/mcp.js";
+import { registerScheduledMessageRoutes } from "./routes/scheduled-messages.js";
 import { registerSkillRoutes } from "./routes/skills.js";
 import { registerStatsRoutes } from "./routes/stats.js";
 import { registerThreadRoutes } from "./routes/threads.js";
@@ -22,6 +23,8 @@ import { registerTodoRoutes } from "./routes/todos.js";
 import { AppServerLifecycleRegistry } from "./services/app-server-lifecycle.js";
 import { AppServerService } from "./services/app-servers.js";
 import { EventService } from "./services/events.js";
+import { MessageSendService } from "./services/message-send.js";
+import { ScheduledMessageService } from "./services/scheduled-messages.js";
 import { ThreadStatusCache } from "./services/thread-status-cache.js";
 
 export type ServerOptions = {
@@ -55,15 +58,32 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
   const events = new EventService();
   const threadStatusCache = new ThreadStatusCache();
   const appServerLifecycle = new AppServerLifecycleRegistry(database, events, threadStatusCache);
+  const messageSendService = new MessageSendService(
+    database,
+    options.config,
+    events,
+    appServerLifecycle,
+    threadStatusCache
+  );
+  const scheduledMessageService = new ScheduledMessageService(
+    database,
+    events,
+    messageSendService.sendText.bind(messageSendService)
+  );
+  scheduledMessageService.markInFlightFailedAfterBackendRestart();
+  scheduledMessageService.start();
   app.decorate("config", options.config);
   app.decorate("database", database);
   app.decorate("events", events);
   app.decorate("threadStatusCache", threadStatusCache);
   app.decorate("appServerLifecycle", appServerLifecycle);
+  app.decorate("messageSendService", messageSendService);
+  app.decorate("scheduledMessageService", scheduledMessageService);
 
   await app.register(fastifyMultipart);
 
   app.addHook("onClose", async () => {
+    scheduledMessageService.stop();
     await appServerLifecycle.closeAll();
     database.close();
   });
@@ -99,8 +119,8 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
   await registerSkillRoutes(app);
   await registerStatsRoutes(app);
   await registerUiRoutes(app);
-
   await registerTodoRoutes(app);
+  await registerScheduledMessageRoutes(app);
   return app;
 }
 
@@ -111,5 +131,7 @@ declare module "fastify" {
     events: EventService;
     threadStatusCache: ThreadStatusCache;
     appServerLifecycle: AppServerLifecycleRegistry;
+    messageSendService: MessageSendService;
+    scheduledMessageService: ScheduledMessageService;
   }
 }

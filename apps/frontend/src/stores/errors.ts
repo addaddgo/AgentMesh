@@ -12,7 +12,8 @@ export function notifyError(error: unknown, title = "Request failed"): void {
     title,
     message,
     type: "error",
-    duration: 6000
+    duration: 0,
+    showClose: true
   });
 }
 

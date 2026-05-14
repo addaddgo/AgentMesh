@@ -5,6 +5,10 @@ import type {
   TodoCategoryListResponse,
   TodoUpdateRequest,
   TodoReorderRequest,
+  ScheduledMessageCreateRequest,
+  ScheduledMessageDto,
+  ScheduledMessageListResponse,
+  ScheduledMessageUpdateRequest,
   AppServerDto,
   AppServerListResponse,
   AccountUsageDto,
@@ -449,6 +453,48 @@ export class ApiClient {
       }
     );
     return response.items;
+  }
+
+  public async listScheduledMessages(): Promise<readonly ScheduledMessageDto[]> {
+    const response = await this.request<ScheduledMessageListResponse>("/api/scheduled-messages");
+    return response.items;
+  }
+
+  public async createScheduledMessage(
+    payload: ScheduledMessageCreateRequest
+  ): Promise<ScheduledMessageDto> {
+    const response = await this.request<{ readonly item: ScheduledMessageDto }>(
+      "/api/scheduled-messages",
+      {
+        method: "POST",
+        body: payload
+      }
+    );
+    return response.item;
+  }
+
+  public async updateScheduledMessage(
+    id: string,
+    payload: ScheduledMessageUpdateRequest
+  ): Promise<ScheduledMessageDto> {
+    const response = await this.request<{ readonly item: ScheduledMessageDto }>(
+      `/api/scheduled-messages/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        body: payload
+      }
+    );
+    return response.item;
+  }
+
+  public async cancelScheduledMessage(id: string): Promise<ScheduledMessageDto> {
+    const response = await this.request<{ readonly item: ScheduledMessageDto }>(
+      `/api/scheduled-messages/${encodeURIComponent(id)}/cancel`,
+      {
+        method: "POST"
+      }
+    );
+    return response.item;
   }
 
   private async request<T>(

@@ -335,3 +335,33 @@ export const todos = sqliteTable(
     index("todos_sort_index_idx").on(table.sortIndex)
   ]
 );
+
+export const scheduledMessages = sqliteTable(
+  "scheduled_messages",
+  {
+    id: text("id").primaryKey(),
+    appServerId: text("app_server_id")
+      .notNull()
+      .references(() => appServers.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    runAt: integer("run_at", { mode: "timestamp_ms" }).notNull(),
+    status: text("status", {
+      enum: ["scheduled", "sending", "sent", "failed", "canceled"]
+    }).notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastError: text("last_error"),
+    lastAttemptAt: integer("last_attempt_at", { mode: "timestamp_ms" }),
+    sentMessageId: text("sent_message_id").references(() => messages.id, { onDelete: "set null" }),
+    sentTurnId: text("sent_turn_id").references(() => turns.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [
+    index("scheduled_messages_status_run_at_idx").on(table.status, table.runAt),
+    index("scheduled_messages_thread_idx").on(table.threadId, table.createdAt),
+    index("scheduled_messages_app_server_idx").on(table.appServerId, table.createdAt)
+  ]
+);

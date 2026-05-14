@@ -20,19 +20,22 @@ import { useMessageStore } from "./messages";
 import { useThreadReadyStore } from "./threadReady";
 import { useThreadStore } from "./threads";
 import { useUiLayoutStore } from "./uiLayout";
+import { useScheduledMessageStore } from "./scheduledMessages";
 import { useTodoStore } from "./todos";
 
 type RealtimeState = {
   connected: boolean;
   started: boolean;
   _unsubDispatchers: (() => void) | null;
+  notifiedFailedTurnIds: Record<string, true>;
 };
 
 export const useRealtimeStore = defineStore("realtime", {
   state: (): RealtimeState => ({
     connected: false,
     started: false,
-    _unsubDispatchers: null
+    _unsubDispatchers: null,
+    notifiedFailedTurnIds: {}
   }),
 
   actions: {
@@ -182,7 +185,11 @@ export const useRealtimeStore = defineStore("realtime", {
           const messages = useMessageStore();
           const threads = useThreadStore();
           if (turn !== null) {
+            const previousStatus = messages.turnsById[turn.id]?.status ?? null;
             messages.upsertTurn(turn);
+            if (turn.status === "failed" && previousStatus !== "failed") {
+              this.notifyTurnFailed(turn);
+            }
             // Completed/failed turns imply thread status may have changed
             if (["completed", "failed"].includes(turn.status)) {
               try {
@@ -219,6 +226,14 @@ export const useRealtimeStore = defineStore("realtime", {
         eventBus.on("todo.updated", async () => {
           const todoStore = useTodoStore();
           await todoStore.load();
+        })
+      );
+
+      // --- Scheduled messages ---
+      unsubs.push(
+        eventBus.on("scheduled_message.updated", async () => {
+          const scheduledMessages = useScheduledMessageStore();
+          await scheduledMessages.load();
         })
       );
 
@@ -259,6 +274,24 @@ export const useRealtimeStore = defineStore("realtime", {
       }
 
       notifyThreadReady(info.thread, info.appServer);
+    },
+
+    notifyTurnFailed(turn: TurnDto): void {
+      if (this.notifiedFailedTurnIds[turn.id] === true) {
+        return;
+      }
+
+      this.notifiedFailedTurnIds[turn.id] = true;
+      const threads = useThreadStore();
+      const appServers = useAppServerStore();
+      const thread = threads.threadById(turn.threadId);
+      const appServer = appServers.appServers.find((candidate) => candidate.id === turn.appServerId);
+      const threadLabel =
+        thread === null
+          ? "Thread failed"
+          : `${appServer?.name ?? "AppServer"} / ${thread.threadName}${thread.agentName === null ? "" : ` / ${thread.agentName}`}`;
+
+      notifyError(turn.error ?? "Codex turn failed.", threadLabel);
     }
   }
 });

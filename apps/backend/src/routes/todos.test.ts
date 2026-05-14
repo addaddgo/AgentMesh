@@ -25,7 +25,9 @@ describe("todo routes", () => {
         name: "Ship observation stack",
         description: "Need a reusable harness layer",
         category: "planning",
-        dueAt: 1_777_777_777_000
+        dueAt: 1_777_777_777_000,
+        deadlineMode: "relative",
+        relativeDurationMinutes: 150
       }
     });
 
@@ -36,7 +38,40 @@ describe("todo routes", () => {
         description: "Need a reusable harness layer",
         category: "planning",
         dueAt: 1_777_777_777_000,
+        deadlineMode: "relative",
+        relativeDurationMinutes: 150,
         done: false
+      }
+    });
+  });
+
+  it("updates todo deadline mode and duration", async () => {
+    const { app } = await setup();
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/api/todos",
+      payload: { name: "A" }
+    });
+
+    const id = createResponse.json().item.id as string;
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/todos/${id}`,
+      payload: {
+        dueAt: 1_888_888_888_000,
+        deadlineMode: "absolute",
+        relativeDurationMinutes: null
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      item: {
+        id,
+        dueAt: 1_888_888_888_000,
+        deadlineMode: "absolute",
+        relativeDurationMinutes: null
       }
     });
   });

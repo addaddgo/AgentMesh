@@ -296,6 +296,8 @@ export const todos = sqliteTable(
     category: text("category"),
     sortIndex: integer("sort_index").notNull().default(0),
     dueAt: integer("due_at", { mode: "timestamp_ms" }),
+    deadlineMode: text("deadline_mode", { enum: ["absolute", "relative"] }),
+    relativeDurationMinutes: integer("relative_duration_minutes"),
     done: integer("done", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()

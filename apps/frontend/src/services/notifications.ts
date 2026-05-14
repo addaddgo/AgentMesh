@@ -1,4 +1,4 @@
-import type { AppServerDto, ApprovalDto, ThreadDto } from "@agentmesh/shared";
+import type { AppServerDto, ApprovalDto, ThreadDto, TodoItemDto } from "@agentmesh/shared";
 
 export function browserNotificationsEnabled(): boolean {
   return typeof window !== "undefined" && "Notification" in window;
@@ -60,5 +60,16 @@ export function notifyErrorEvent(title: string, message: string, tag?: string): 
   new window.Notification(title, {
     body: message,
     tag: tag ?? `error:${title}`
+  });
+}
+
+export function notifyTodoDeadline(item: TodoItemDto): void {
+  if (browserNotificationPermission() !== "granted" || item.dueAt === null) {
+    return;
+  }
+
+  new window.Notification("Todo deadline reached", {
+    body: item.category === null ? item.name : `${item.category} / ${item.name}`,
+    tag: `todo-deadline:${item.id}:${item.dueAt}`
   });
 }

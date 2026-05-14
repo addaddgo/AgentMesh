@@ -1331,6 +1331,11 @@ textarea {
   padding: 0.7rem 0.8rem;
 }
 
+.markdown-editor .cm-activeLine,
+.markdown-editor .cm-activeLineGutter {
+  background: transparent;
+}
+
 .markdown-editor .cm-focused {
   outline: 2px solid color-mix(in srgb, var(--accent-primary) 40%, transparent);
   outline-offset: -2px;

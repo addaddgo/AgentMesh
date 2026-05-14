@@ -2,19 +2,27 @@ import type { TodoItemDto, TodoCreateRequest, TodoUpdateRequest, TodoReorderRequ
 import { defineStore } from "pinia";
 
 import { apiClient } from "../api/client";
+import { notifyTodoDeadline } from "../services/notifications";
 import { notifyError } from "./errors";
 
 type TodoState = {
   items: TodoItemDto[];
   categories: string[];
   loading: boolean;
+  deadlineWatcherStarted: boolean;
+  notifiedDeadlineKeys: Record<string, true>;
 };
+
+const TODO_DEADLINE_NOTIFICATIONS_STORAGE_KEY = "todoDeadlineNotifications";
+let deadlineWatcherTimer: number | null = null;
 
 export const useTodoStore = defineStore("todos", {
   state: (): TodoState => ({
     items: [],
     categories: [],
-    loading: false
+    loading: false,
+    deadlineWatcherStarted: false,
+    notifiedDeadlineKeys: {}
   }),
 
   actions: {
@@ -35,6 +43,7 @@ export const useTodoStore = defineStore("todos", {
         ]);
         this.items = [...items];
         this.categories = [...categories];
+        this.evaluateDeadlineNotifications();
       } catch (error) {
         notifyError(error, "Failed to load todos");
       } finally {
@@ -46,6 +55,7 @@ export const useTodoStore = defineStore("todos", {
       const item = await apiClient.createTodo(payload);
       this.items = [...this.items, item];
       await this.loadCategories();
+      this.evaluateDeadlineNotifications();
       return item;
     },
 
@@ -53,6 +63,7 @@ export const useTodoStore = defineStore("todos", {
       const item = await apiClient.updateTodo(id, payload);
       this.items = this.items.map((existing) => (existing.id === id ? item : existing));
       await this.loadCategories();
+      this.evaluateDeadlineNotifications();
     },
 
     async remove(id: string): Promise<void> {
@@ -64,6 +75,46 @@ export const useTodoStore = defineStore("todos", {
     async reorder(ids: readonly string[]): Promise<void> {
       const items = await apiClient.reorderTodos({ ids });
       this.items = [...items];
+    },
+
+    async ensureDeadlineWatcher(): Promise<void> {
+      if (typeof window === "undefined" || this.deadlineWatcherStarted) {
+        return;
+      }
+
+      this.deadlineWatcherStarted = true;
+      this.notifiedDeadlineKeys = readNotifiedDeadlineKeys();
+      await this.load();
+      this.evaluateDeadlineNotifications();
+      deadlineWatcherTimer = window.setInterval(() => {
+        this.evaluateDeadlineNotifications();
+      }, 30_000);
+    },
+
+    evaluateDeadlineNotifications(): void {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      const now = Date.now();
+      for (const item of this.items) {
+        if (item.done || item.dueAt === null || item.dueAt > now) {
+          continue;
+        }
+
+        const key = deadlineNotificationKey(item);
+        if (this.notifiedDeadlineKeys[key] === true) {
+          continue;
+        }
+
+        notifyTodoDeadline(item);
+        this.notifiedDeadlineKeys = {
+          ...this.notifiedDeadlineKeys,
+          [key]: true
+        };
+      }
+
+      writeNotifiedDeadlineKeys(this.notifiedDeadlineKeys);
     },
 
     async moveTodo(
@@ -117,3 +168,33 @@ export const useTodoStore = defineStore("todos", {
     }
   }
 });
+
+function deadlineNotificationKey(item: TodoItemDto): string {
+  return `${item.id}:${item.dueAt ?? "none"}`;
+}
+
+function readNotifiedDeadlineKeys(): Record<string, true> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  const raw = window.localStorage.getItem(TODO_DEADLINE_NOTIFICATIONS_STORAGE_KEY);
+  if (raw === null) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, true>;
+    return parsed ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function writeNotifiedDeadlineKeys(keys: Record<string, true>): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(TODO_DEADLINE_NOTIFICATIONS_STORAGE_KEY, JSON.stringify(keys));
+}

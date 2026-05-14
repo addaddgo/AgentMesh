@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { TodoItemDto, TodoUpdateRequest } from "@agentmesh/shared";
+import type { TodoDeadlineMode, TodoItemDto, TodoUpdateRequest } from "@agentmesh/shared";
 
 import type { DatabaseHandle } from "../db/index.js";
 import { NotFoundError } from "../errors.js";
@@ -13,6 +13,8 @@ type TodoRow = {
   readonly category: string | null;
   readonly sort_index: number;
   readonly due_at: number | null;
+  readonly deadline_mode: TodoDeadlineMode | null;
+  readonly relative_duration_minutes: number | null;
   readonly done: number;
   readonly created_at: number;
   readonly updated_at: number;
@@ -46,20 +48,52 @@ export class TodoService {
     return rows.map((row) => row.category);
   }
 
-  public create(input: { name: string; description?: string; category?: string | null | undefined; dueAt?: number | null | undefined }): TodoItemDto {
+  public create(input: {
+    name: string;
+    description?: string;
+    category?: string | null | undefined;
+    dueAt?: number | null | undefined;
+    deadlineMode?: TodoDeadlineMode | null | undefined;
+    relativeDurationMinutes?: number | null | undefined;
+  }): TodoItemDto {
     const now = Date.now();
     const id = `todo_${randomUUID()}`;
     const description = input.description ?? "";
     const dueAt = input.dueAt === undefined ? null : input.dueAt;
+    const deadlineMode = input.deadlineMode === undefined ? null : input.deadlineMode;
+    const relativeDurationMinutes =
+      input.relativeDurationMinutes === undefined ? null : input.relativeDurationMinutes;
 
     this.database.sqlite
       .prepare(
         `
-          INSERT INTO todos (id, name, description, category, sort_index, due_at, done, created_at, updated_at)
-          VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(sort_index), -1) + 1 FROM todos), ?, 0, ?, ?)
+          INSERT INTO todos (
+            id,
+            name,
+            description,
+            category,
+            sort_index,
+            due_at,
+            deadline_mode,
+            relative_duration_minutes,
+            done,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(sort_index), -1) + 1 FROM todos), ?, ?, ?, 0, ?, ?)
         `
       )
-      .run(id, input.name, description, input.category ?? null, dueAt, now, now);
+      .run(
+        id,
+        input.name,
+        description,
+        input.category ?? null,
+        dueAt,
+        deadlineMode,
+        relativeDurationMinutes,
+        now,
+        now
+      );
 
     const row = this.database.sqlite
       .prepare("SELECT * FROM todos WHERE id = ?")
@@ -91,6 +125,8 @@ export class TodoService {
             category = COALESCE(?, category),
             sort_index = COALESCE(?, sort_index),
             due_at = ?,
+            deadline_mode = ?,
+            relative_duration_minutes = ?,
             done = COALESCE(?, done),
             updated_at = ?
           WHERE id = ?
@@ -102,6 +138,10 @@ export class TodoService {
         input.category ?? null,
         input.sortIndex ?? null,
         input.dueAt === undefined ? existing.due_at : input.dueAt,
+        input.deadlineMode === undefined ? existing.deadline_mode : input.deadlineMode,
+        input.relativeDurationMinutes === undefined
+          ? existing.relative_duration_minutes
+          : input.relativeDurationMinutes,
         input.done === undefined ? null : input.done ? 1 : 0,
         now,
         id
@@ -161,6 +201,8 @@ function toTodoItemDto(row: TodoRow): TodoItemDto {
     category: row.category,
     sortIndex: row.sort_index,
     dueAt: row.due_at,
+    deadlineMode: row.deadline_mode,
+    relativeDurationMinutes: row.relative_duration_minutes,
     done: row.done === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at

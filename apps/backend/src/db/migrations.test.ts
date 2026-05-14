@@ -87,6 +87,11 @@ describe("database migrations", () => {
     expect(
       columnNames(app.database.sqlite.pragma("table_info(codex_events)") as TableInfoRow[])
     ).toContain("raw_json");
+    expect(
+      columnNames(app.database.sqlite.pragma("table_info(todos)") as TableInfoRow[])
+    ).toEqual(
+      expect.arrayContaining(["deadline_mode", "relative_duration_minutes", "due_at"])
+    );
   });
 
   it("enforces unique app-server names", async () => {

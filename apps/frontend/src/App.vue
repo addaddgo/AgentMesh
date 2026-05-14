@@ -37,10 +37,12 @@ import { RouterLink, RouterView } from "vue-router";
 import { requestBrowserNotificationPermission } from "./services/notifications";
 import { useRealtimeStore } from "./stores/realtime";
 import { useThemeStore } from "./stores/theme";
+import { useTodoStore } from "./stores/todos";
 import { useUiLayoutStore } from "./stores/uiLayout";
 
 const realtime = useRealtimeStore();
 const theme = useThemeStore();
+const todos = useTodoStore();
 const uiLayout = useUiLayoutStore();
 
 theme.loadPersistedTheme();
@@ -55,6 +57,7 @@ watch(
 onMounted(() => {
   void uiLayout.loadPersistedState();
   void requestBrowserNotificationPermission();
+  void todos.ensureDeadlineWatcher();
   realtime.start();
 });
 </script>

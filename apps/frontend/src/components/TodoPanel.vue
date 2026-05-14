@@ -147,16 +147,56 @@
           >
             Add category
           </button>
-          <el-date-picker
-            v-model="datePickerValue[item.id]"
-            type="date"
-            size="small"
-            placeholder="Due"
-            value-format="timestamp"
-            :disabled="item.done"
-            class="todo-date-picker"
-            @change="setDueDate(item, $event)"
-          />
+          <div class="todo-deadline-controls">
+            <el-select
+              v-model="deadlineModeValue[item.id]"
+              size="small"
+              class="todo-deadline-mode"
+              :disabled="item.done"
+              @change="setItemDeadlineMode(item, $event)"
+            >
+              <el-option label="No deadline" value="none" />
+              <el-option label="Date" value="absolute" />
+              <el-option label="Remaining" value="relative" />
+            </el-select>
+            <el-date-picker
+              v-if="deadlineModeValue[item.id] === 'absolute'"
+              v-model="datePickerValue[item.id]"
+              type="datetime"
+              size="small"
+              placeholder="Deadline"
+              value-format="timestamp"
+              :disabled="item.done"
+              class="todo-date-picker"
+              @change="setDueDate(item, $event)"
+            />
+            <template v-else-if="deadlineModeValue[item.id] === 'relative'">
+              <el-input-number
+                v-model="relativeHoursValue[item.id]"
+                size="small"
+                :min="0"
+                :max="999"
+                :step="1"
+                controls-position="right"
+                class="todo-duration-input"
+                :disabled="item.done"
+                @change="setRelativeDeadline(item)"
+              />
+              <span class="todo-duration-label">h</span>
+              <el-input-number
+                v-model="relativeMinutesValue[item.id]"
+                size="small"
+                :min="0"
+                :max="59"
+                :step="5"
+                controls-position="right"
+                class="todo-duration-input todo-duration-input-minutes"
+                :disabled="item.done"
+                @change="setRelativeDeadline(item)"
+              />
+              <span class="todo-duration-label">m</span>
+            </template>
+          </div>
 
           <el-button
             size="small"
@@ -199,13 +239,51 @@
           size="small"
           placeholder="Description (optional)"
         />
+      </div>
+      <div class="todo-add-row-deadline">
+        <el-select v-model="newDeadlineMode" size="small" class="todo-deadline-mode">
+          <el-option label="No deadline" value="none" />
+          <el-option label="Date" value="absolute" />
+          <el-option label="Remaining" value="relative" />
+        </el-select>
+        <el-date-picker
+          v-if="newDeadlineMode === 'absolute'"
+          v-model="newDeadlineAt"
+          type="datetime"
+          size="small"
+          placeholder="Deadline"
+          value-format="timestamp"
+          class="todo-date-picker"
+        />
+        <template v-else-if="newDeadlineMode === 'relative'">
+          <el-input-number
+            v-model="newRelativeHours"
+            size="small"
+            :min="0"
+            :max="999"
+            :step="1"
+            controls-position="right"
+            class="todo-duration-input"
+          />
+          <span class="todo-duration-label">h</span>
+          <el-input-number
+            v-model="newRelativeMinutes"
+            size="small"
+            :min="0"
+            :max="59"
+            :step="5"
+            controls-position="right"
+            class="todo-duration-input todo-duration-input-minutes"
+          />
+          <span class="todo-duration-label">m</span>
+        </template>
         <el-button
           size="small"
           class="todo-add-button"
           :icon="Plus"
           circle
           native-type="submit"
-          :disabled="newName.trim().length === 0"
+          :disabled="!canAddTodo"
           title="Add"
           aria-label="Add"
         />
@@ -216,8 +294,8 @@
 
 <script setup lang="ts">
 import { CloseBold, Delete, Plus } from "@element-plus/icons-vue";
-import type { TodoItemDto } from "@agentmesh/shared";
-import { computed, onMounted, reactive, ref } from "vue";
+import type { TodoDeadlineMode, TodoItemDto } from "@agentmesh/shared";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
 import { useTodoStore } from "../stores/todos";
 import { useThemeStore } from "../stores/theme";
@@ -233,11 +311,16 @@ const searchQuery = ref("");
 const newName = ref("");
 const newDescription = ref("");
 const newCategory = ref("");
+const newDeadlineMode = ref<TodoDeadlineMode | "none">("none");
+const newDeadlineAt = ref<number | null>(null);
+const newRelativeHours = ref(1);
+const newRelativeMinutes = ref(0);
 const editingId = ref<string | null>(null);
 const editingField = ref<"name" | "description" | "category" | null>(null);
 const editValue = ref("");
 const expandedIds = ref(new Set<string>());
 const expandedGroupNames = ref(new Set<string>(["Uncategorized"]));
+let relativeDeadlineRefreshTimer: number | null = null;
 
 function toggleGroup(name: string): void {
   const next = new Set(expandedGroupNames.value);
@@ -261,6 +344,9 @@ function toggleExpanded(id: string): void {
 
 const dragItemId = ref<string | null>(null);
 const datePickerValue = reactive<Record<string, number | null>>({});
+const deadlineModeValue = reactive<Record<string, TodoDeadlineMode | "none">>({});
+const relativeHoursValue = reactive<Record<string, number>>({});
+const relativeMinutesValue = reactive<Record<string, number>>({});
 
 const groupedItems = computed(() => {
   const groups = new Map<string, TodoItemDto[]>();
@@ -335,22 +421,33 @@ const filteredItems = computed(() => {
   );
 });
 
+const canAddTodo = computed(() => {
+  if (newName.value.trim().length === 0) {
+    return false;
+  }
+  if (newDeadlineMode.value === "absolute") {
+    return newDeadlineAt.value !== null;
+  }
+  return true;
+});
+
 onMounted(() => {
   void store.load();
-  // Initialize date picker values from loaded items
-  for (const item of store.items) {
-    datePickerValue[item.id] = item.dueAt;
+  syncTodoDeadlineState();
+  relativeDeadlineRefreshTimer = window.setInterval(() => {
+    refreshRelativeDeadlineDrafts();
+  }, 30_000);
+});
+
+onBeforeUnmount(() => {
+  if (relativeDeadlineRefreshTimer !== null) {
+    window.clearInterval(relativeDeadlineRefreshTimer);
+    relativeDeadlineRefreshTimer = null;
   }
 });
 
-// Watch for store items changes to sync date picker values
-// (e.g., after SSE reload)
 store.$subscribe((_mutation, _state) => {
-  for (const item of store.items) {
-    if (!(item.id in datePickerValue)) {
-      datePickerValue[item.id] = item.dueAt;
-    }
-  }
+  syncTodoDeadlineState();
 });
 
 function normalizeCategory(value: string): string | null {
@@ -421,7 +518,63 @@ async function toggleDone(item: TodoItemDto): Promise<void> {
 }
 
 async function setDueDate(item: TodoItemDto, value: number | null): Promise<void> {
-  await store.update(item.id, { dueAt: value });
+  datePickerValue[item.id] = value;
+  await store.update(item.id, {
+    dueAt: value,
+    deadlineMode: value === null ? null : "absolute",
+    relativeDurationMinutes: null
+  });
+}
+
+async function setItemDeadlineMode(
+  item: TodoItemDto,
+  mode: TodoDeadlineMode | "none"
+): Promise<void> {
+  deadlineModeValue[item.id] = mode;
+  if (mode === "none") {
+    datePickerValue[item.id] = null;
+    await store.update(item.id, {
+      dueAt: null,
+      deadlineMode: null,
+      relativeDurationMinutes: null
+    });
+    return;
+  }
+
+  if (mode === "absolute") {
+    const dueAt = item.dueAt ?? Date.now() + 60 * 60 * 1000;
+    datePickerValue[item.id] = dueAt;
+    await store.update(item.id, {
+      dueAt,
+      deadlineMode: "absolute",
+      relativeDurationMinutes: null
+    });
+    return;
+  }
+
+  const duration =
+    item.relativeDurationMinutes ?? Math.max(1, Math.ceil(((item.dueAt ?? Date.now()) - Date.now()) / 60_000));
+  applyRelativeDraft(item.id, duration);
+  const dueAt = Date.now() + duration * 60_000;
+  await store.update(item.id, {
+    dueAt,
+    deadlineMode: "relative",
+    relativeDurationMinutes: duration
+  });
+}
+
+async function setRelativeDeadline(item: TodoItemDto): Promise<void> {
+  const hours = normalizeDurationHours(relativeHoursValue[item.id]);
+  const minutes = normalizeDurationMinutes(relativeMinutesValue[item.id]);
+  relativeHoursValue[item.id] = hours;
+  relativeMinutesValue[item.id] = minutes;
+  const duration = hours * 60 + minutes;
+  const dueAt = Date.now() + duration * 60_000;
+  await store.update(item.id, {
+    dueAt,
+    deadlineMode: "relative",
+    relativeDurationMinutes: duration
+  });
 }
 
 async function addTodo(): Promise<void> {
@@ -432,10 +585,19 @@ async function addTodo(): Promise<void> {
 
   const description = newDescription.value.trim() || null;
   const category = normalizeCategory(newCategory.value);
-  await store.create({ name, description: description || undefined, category });
+  await store.create({
+    name,
+    description: description || undefined,
+    category,
+    ...buildNewTodoDeadlinePayload()
+  });
   newName.value = "";
   newDescription.value = "";
   newCategory.value = "";
+  newDeadlineMode.value = "none";
+  newDeadlineAt.value = null;
+  newRelativeHours.value = 1;
+  newRelativeMinutes.value = 0;
 }
 
 function onDragStart(event: DragEvent, item: TodoItemDto): void {
@@ -530,6 +692,107 @@ async function onDrop(event: DragEvent): Promise<void> {
 
   await store.create({ name, description: description.length > 0 ? description : undefined });
 }
+
+function syncTodoDeadlineState(): void {
+  const activeIds = new Set<string>();
+  for (const item of store.items) {
+    activeIds.add(item.id);
+    datePickerValue[item.id] = item.dueAt;
+    deadlineModeValue[item.id] = normalizeDeadlineMode(item);
+    applyRelativeDraft(item.id, relativeMinutesForItem(item));
+  }
+
+  for (const id of Object.keys(datePickerValue)) {
+    if (!activeIds.has(id)) {
+      delete datePickerValue[id];
+      delete deadlineModeValue[id];
+      delete relativeHoursValue[id];
+      delete relativeMinutesValue[id];
+    }
+  }
+
+  refreshRelativeDeadlineDrafts();
+}
+
+function normalizeDeadlineMode(item: TodoItemDto): TodoDeadlineMode | "none" {
+  if (item.deadlineMode !== null) {
+    return item.deadlineMode;
+  }
+  return item.dueAt === null ? "none" : "absolute";
+}
+
+function relativeMinutesForItem(item: TodoItemDto): number {
+  if (normalizeDeadlineMode(item) === "relative" && item.dueAt !== null) {
+    return Math.max(0, Math.ceil((item.dueAt - Date.now()) / 60_000));
+  }
+  if (item.relativeDurationMinutes !== null) {
+    return item.relativeDurationMinutes;
+  }
+  if (item.dueAt === null) {
+    return 60;
+  }
+  return Math.max(0, Math.ceil((item.dueAt - Date.now()) / 60_000));
+}
+
+function applyRelativeDraft(id: string, totalMinutes: number): void {
+  const normalized = Math.max(0, totalMinutes);
+  relativeHoursValue[id] = Math.floor(normalized / 60);
+  relativeMinutesValue[id] = normalized % 60;
+}
+
+function refreshRelativeDeadlineDrafts(): void {
+  for (const item of store.items) {
+    if (normalizeDeadlineMode(item) !== "relative") {
+      continue;
+    }
+    applyRelativeDraft(item.id, relativeMinutesForItem(item));
+  }
+}
+
+function normalizeDurationHours(value: number | null | undefined): number {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
+function normalizeDurationMinutes(value: number | null | undefined): number {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 0;
+  }
+  return Math.min(59, Math.max(0, Math.floor(value)));
+}
+
+function buildNewTodoDeadlinePayload(): {
+  dueAt?: number | null;
+  deadlineMode?: TodoDeadlineMode | null;
+  relativeDurationMinutes?: number | null;
+} {
+  if (newDeadlineMode.value === "absolute") {
+    return {
+      dueAt: newDeadlineAt.value,
+      deadlineMode: newDeadlineAt.value === null ? null : "absolute",
+      relativeDurationMinutes: null
+    };
+  }
+
+  if (newDeadlineMode.value === "relative") {
+    const hours = normalizeDurationHours(newRelativeHours.value);
+    const minutes = normalizeDurationMinutes(newRelativeMinutes.value);
+    const duration = hours * 60 + minutes;
+    return {
+      dueAt: Date.now() + duration * 60_000,
+      deadlineMode: "relative",
+      relativeDurationMinutes: duration
+    };
+  }
+
+  return {
+    dueAt: null,
+    deadlineMode: null,
+    relativeDurationMinutes: null
+  };
+}
 </script>
 
 <style scoped>
@@ -594,9 +857,11 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 
 .todo-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.5rem;
+  row-gap: 0.4rem;
   align-items: flex-start;
-  gap: 0.5rem;
   padding: 0.5rem;
   border: 1px solid var(--border-list);
   border-radius: 0.75rem;
@@ -616,6 +881,7 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 
 .todo-body {
+  grid-column: 2;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
@@ -698,18 +964,46 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 
 .todo-meta {
+  grid-column: 2;
   display: flex;
   align-items: center;
   gap: 0.35rem;
+  flex-wrap: wrap;
   flex-shrink: 0;
 }
 
 .todo-date-picker {
-  width: 130px;
+  width: 188px;
 }
 
 .todo-date-picker :deep(.el-input__wrapper) {
   font-size: 0.9rem;
+}
+
+.todo-deadline-controls,
+.todo-add-row-deadline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.todo-deadline-mode {
+  width: 124px;
+}
+
+.todo-duration-input {
+  width: 88px;
+}
+
+.todo-duration-input-minutes {
+  width: 82px;
+}
+
+.todo-duration-label {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .todo-add-form :deep(.el-input__wrapper) {

@@ -389,6 +389,16 @@ export const MIGRATIONS: readonly Migration[] = [
       DROP TABLE IF EXISTS attachments;
     `
   },
+  {
+    id: "0010_todo_deadline_modes",
+    sql: `
+      ALTER TABLE todos
+        ADD COLUMN deadline_mode TEXT CHECK (deadline_mode IN ('absolute', 'relative'));
+
+      ALTER TABLE todos
+        ADD COLUMN relative_duration_minutes INTEGER;
+    `
+  },
 ];
 
 export function runMigrations(sqlite: Database): void {

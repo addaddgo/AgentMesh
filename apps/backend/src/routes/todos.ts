@@ -17,6 +17,8 @@ const createTodoSchema = z
     name: z.string().trim().min(1),
     description: z.string().optional().default(""),
     dueAt: z.number().int().nullable().optional(),
+    deadlineMode: z.enum(["absolute", "relative"]).nullable().optional(),
+    relativeDurationMinutes: z.number().int().min(0).nullable().optional(),
     category: z.string().nullable().optional(),
   })
   .strict();
@@ -27,6 +29,8 @@ const updateTodoSchema = z
     description: z.string().optional(),
     sortIndex: z.number().int().optional(),
     dueAt: z.number().int().nullable().optional(),
+    deadlineMode: z.enum(["absolute", "relative"]).nullable().optional(),
+    relativeDurationMinutes: z.number().int().min(0).nullable().optional(),
     category: z.string().nullable().optional(),
     done: z.boolean().optional()
   })

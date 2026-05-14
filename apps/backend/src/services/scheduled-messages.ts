@@ -110,13 +110,15 @@ export class ScheduledMessageService {
         `
           SELECT *
           FROM scheduled_messages
+          WHERE status != 'acknowledged'
           ORDER BY
             CASE status
               WHEN 'scheduled' THEN 0
               WHEN 'sending' THEN 1
               WHEN 'failed' THEN 2
               WHEN 'sent' THEN 3
-              ELSE 4
+              WHEN 'canceled' THEN 4
+              ELSE 5
             END ASC,
             run_at ASC,
             created_at DESC
@@ -240,6 +242,29 @@ export class ScheduledMessageService {
 
     const item = this.get(id);
     this.publishUpdated("canceled", item);
+    return item;
+  }
+
+  public acknowledge(id: string): ScheduledMessageDto {
+    const existing = this.getRow(id);
+    if (existing.status !== "sent") {
+      throw new RequestValidationError("Only sent messages can be acknowledged");
+    }
+
+    const now = Date.now();
+    this.database.sqlite
+      .prepare(
+        `
+          UPDATE scheduled_messages
+          SET status = 'acknowledged',
+              updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(now, id);
+
+    const item = this.get(id);
+    this.publishUpdated("acknowledged", item);
     return item;
   }
 

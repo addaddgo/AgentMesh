@@ -133,6 +133,44 @@ describe("scheduled message routes", () => {
 
     expect(list.json()).toEqual({ items: [] });
   });
+
+  it("keeps sent messages visible until manually acknowledged", async () => {
+    const testBackend = await setup();
+    const { app } = testBackend;
+    seedScheduledMessage(testBackend, {
+      id: "sched-sent-1",
+      status: "sent",
+      text: "Already sent"
+    });
+
+    const before = await app.inject({
+      method: "GET",
+      url: "/api/scheduled-messages"
+    });
+
+    expect(before.statusCode).toBe(200);
+    expect(before.json()).toMatchObject({
+      items: [{ id: "sched-sent-1", status: "sent" }]
+    });
+
+    const acknowledged = await app.inject({
+      method: "POST",
+      url: "/api/scheduled-messages/sched-sent-1/acknowledge"
+    });
+
+    expect(acknowledged.statusCode).toBe(200);
+    expect(acknowledged.json()).toMatchObject({
+      item: { id: "sched-sent-1", status: "acknowledged" }
+    });
+
+    const after = await app.inject({
+      method: "GET",
+      url: "/api/scheduled-messages"
+    });
+
+    expect(after.statusCode).toBe(200);
+    expect(after.json()).toEqual({ items: [] });
+  });
 });
 
 function seedAppServerAndThread(backend: TestBackend): void {
@@ -160,4 +198,25 @@ function seedAppServerAndThread(backend: TestBackend): void {
       `
     )
     .run("thread-1", "/workspace/demo", now, now);
+}
+
+function seedScheduledMessage(
+  backend: TestBackend,
+  options: {
+    readonly id: string;
+    readonly status: "scheduled" | "sending" | "failed" | "sent" | "canceled" | "acknowledged";
+    readonly text: string;
+  }
+): void {
+  const now = Date.now();
+  backend.app.database.sqlite
+    .prepare(
+      `
+        INSERT INTO scheduled_messages (
+          id, app_server_id, thread_id, text, run_at, status, attempt_count,
+          last_error, last_attempt_at, sent_message_id, sent_turn_id, created_at, updated_at
+        ) VALUES (?, 'app-1', 'thread-1', ?, ?, ?, 1, NULL, NULL, NULL, NULL, ?, ?)
+      `
+    )
+    .run(options.id, options.text, now, options.status, now, now);
 }

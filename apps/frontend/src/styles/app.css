@@ -448,7 +448,7 @@ textarea,
   height: 100%;
   min-height: 0;
   overflow: auto;
-  padding: 0.9rem;
+  padding: 0.9rem 0.9rem 5rem;
   background: transparent;
 }
 
@@ -1044,6 +1044,18 @@ textarea,
   background: color-mix(in srgb, var(--bg-panel-soft) 78%, var(--bg-panel-elevated) 22%);
 }
 
+.message-virtual-spacer {
+  position: relative;
+  min-height: 100%;
+}
+
+.message-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
 .message-card {
   position: relative;
   width: fit-content;
@@ -1251,6 +1263,8 @@ textarea,
 
 .markdown-part pre {
   margin: 0 0 0.8rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .markdown-part pre code {
@@ -1259,6 +1273,7 @@ textarea,
   background: transparent;
   font-size: 0.86rem;
   line-height: 1.55;
+  white-space: inherit;
 }
 
 .markdown-part strong {

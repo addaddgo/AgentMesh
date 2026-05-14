@@ -320,7 +320,7 @@ export const scheduledMessages = sqliteTable(
     text: text("text").notNull(),
     runAt: integer("run_at", { mode: "timestamp_ms" }).notNull(),
     status: text("status", {
-      enum: ["scheduled", "sending", "sent", "failed", "canceled"]
+      enum: ["scheduled", "sending", "sent", "failed", "canceled", "acknowledged"]
     }).notNull(),
     attemptCount: integer("attempt_count").notNull().default(0),
     lastError: text("last_error"),

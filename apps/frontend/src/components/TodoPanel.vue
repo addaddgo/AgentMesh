@@ -299,7 +299,11 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
 import { useTodoStore } from "../stores/todos";
 import { useThemeStore } from "../stores/theme";
-import { writeMessageTextDrag } from "../utils/messageDragDrop";
+import {
+  canDropMessageText,
+  readMessageTextDrop,
+  writeMessageTextDrag
+} from "../utils/messageDragDrop";
 
 const emit = defineEmits<{
   close: [];
@@ -611,22 +615,41 @@ function onDragStart(event: DragEvent, item: TodoItemDto): void {
 }
 
 function onDragOver(event: DragEvent): void {
-  if (event.dataTransfer !== null) {
+  if (dragItemId.value !== null) {
+    if (event.dataTransfer !== null) {
+      event.dataTransfer.dropEffect = "move";
+    }
+    return;
+  }
+
+  if (canDropMessageText(event.dataTransfer) && event.dataTransfer !== null) {
     event.dataTransfer.dropEffect = "copy";
   }
 }
 
 function onItemDragOver(event: DragEvent, item: TodoItemDto): void {
-  if (dragItemId.value === null || dragItemId.value === item.id) {
+  if (dragItemId.value !== null) {
+    if (dragItemId.value === item.id) {
+      return;
+    }
+
+    if (event.dataTransfer !== null) {
+      event.dataTransfer.dropEffect = "move";
+    }
     return;
   }
 
-  if (event.dataTransfer !== null) {
-    event.dataTransfer.dropEffect = "move";
+  if (canDropMessageText(event.dataTransfer) && event.dataTransfer !== null) {
+    event.dataTransfer.dropEffect = "copy";
   }
 }
 
 async function onItemDrop(event: DragEvent, target: TodoItemDto): Promise<void> {
+  if (dragItemId.value === null) {
+    await createTodoFromDrop(event, target.category ?? null);
+    return;
+  }
+
   const sourceId = dragItemId.value;
   dragItemId.value = null;
 
@@ -641,12 +664,15 @@ async function onItemDrop(event: DragEvent, target: TodoItemDto): Promise<void> 
 }
 
 function onGroupDragOver(event: DragEvent): void {
-  if (dragItemId.value === null) {
+  if (dragItemId.value !== null) {
+    if (event.dataTransfer !== null) {
+      event.dataTransfer.dropEffect = "move";
+    }
     return;
   }
 
-  if (event.dataTransfer !== null) {
-    event.dataTransfer.dropEffect = "move";
+  if (canDropMessageText(event.dataTransfer) && event.dataTransfer !== null) {
+    event.dataTransfer.dropEffect = "copy";
   }
 }
 
@@ -654,6 +680,11 @@ async function onGroupDrop(
   event: DragEvent,
   group: { readonly category: string | null }
 ): Promise<void> {
+  if (dragItemId.value === null) {
+    await createTodoFromDrop(event, group.category);
+    return;
+  }
+
   const sourceId = dragItemId.value;
   dragItemId.value = null;
 
@@ -667,17 +698,19 @@ async function onGroupDrop(
 }
 
 async function onDrop(event: DragEvent): Promise<void> {
-  if (event.dataTransfer === null) {
-    return;
-  }
-
-  // Ignore drops from internal todo drag (handled by onItemDrop)
   if (dragItemId.value !== null) {
     dragItemId.value = null;
     return;
   }
 
-  const text = event.dataTransfer.getData("text/plain");
+  await createTodoFromDrop(event, null);
+}
+
+async function createTodoFromDrop(
+  event: DragEvent,
+  category: string | null
+): Promise<void> {
+  const text = readMessageTextDrop(event.dataTransfer);
   if (text.trim().length === 0) {
     return;
   }
@@ -690,7 +723,11 @@ async function onDrop(event: DragEvent): Promise<void> {
     return;
   }
 
-  await store.create({ name, description: description.length > 0 ? description : undefined });
+  await store.create({
+    name,
+    category,
+    description: description.length > 0 ? description : undefined
+  });
 }
 
 function syncTodoDeadlineState(): void {

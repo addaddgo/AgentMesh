@@ -72,11 +72,20 @@
             placeholder="Minutes"
           />
         </div>
-        <ScheduledMessageComposer
-          v-model="draftText"
-          :app-server-id="selectedAppServerId"
-          placeholder="Message to send later. Use $skill or @path."
-        />
+        <div
+          class="scheduled-message-drop-zone"
+          :class="{ 'is-drop-target': createDropTarget }"
+          @dragenter.prevent="dragEnterDraft($event, 'create')"
+          @dragover.prevent="dragOverDraft($event, 'create')"
+          @dragleave="dragLeaveDraft('create')"
+          @drop.prevent="dropIntoDraft($event, 'create')"
+        >
+          <ScheduledMessageComposer
+            v-model="draftText"
+            :app-server-id="selectedAppServerId"
+            placeholder="Message to send later. Use $skill or @path."
+          />
+        </div>
         <div class="scheduled-messages-form-actions">
           <span class="scheduled-messages-help">Send as a user message after {{ delayLabel(createDelaySeconds) }}.</span>
           <el-button
@@ -143,11 +152,20 @@
                 placeholder="Minutes"
               />
             </div>
-            <ScheduledMessageComposer
-              v-model="editText"
-              :app-server-id="editAppServerId"
-              placeholder="Message to send later. Use $skill or @path."
-            />
+            <div
+              class="scheduled-message-drop-zone"
+              :class="{ 'is-drop-target': editDropTarget }"
+              @dragenter.prevent="dragEnterDraft($event, 'edit')"
+              @dragover.prevent="dragOverDraft($event, 'edit')"
+              @dragleave="dragLeaveDraft('edit')"
+              @drop.prevent="dropIntoDraft($event, 'edit')"
+            >
+              <ScheduledMessageComposer
+                v-model="editText"
+                :app-server-id="editAppServerId"
+                placeholder="Message to send later. Use $skill or @path."
+              />
+            </div>
             <div class="scheduled-message-actions">
               <span class="scheduled-message-meta">
                 Reschedule for {{ delayLabel(editDelaySecondsTotal) }} from now.
@@ -183,6 +201,15 @@
                 {{ statusSummary(item) }}
               </span>
               <div class="scheduled-message-action-buttons">
+                <el-button
+                  v-if="item.status === 'sent'"
+                  size="small"
+                  type="success"
+                  :loading="acknowledgingId === item.id"
+                  @click="acknowledgeItem(item.id)"
+                >
+                  OK
+                </el-button>
                 <el-button
                   v-if="editableStatuses.has(item.status)"
                   size="small"
@@ -232,6 +259,11 @@ import ScheduledMessageComposer from "./ScheduledMessageComposer.vue";
 import { useAppServerStore } from "../stores/appServers";
 import { useScheduledMessageStore } from "../stores/scheduledMessages";
 import { useThreadStore } from "../stores/threads";
+import {
+  appendDroppedText,
+  canDropMessageText,
+  readMessageTextDrop
+} from "../utils/messageDragDrop";
 
 const appServers = useAppServerStore();
 const threads = useThreadStore();
@@ -254,6 +286,9 @@ const editText = ref("");
 const updatingId = ref<string | null>(null);
 const cancelingId = ref<string | null>(null);
 const deletingId = ref<string | null>(null);
+const acknowledgingId = ref<string | null>(null);
+const createDropTarget = ref(false);
+const editDropTarget = ref(false);
 const editableStatuses = new Set<ScheduledMessageDto["status"]>(["scheduled", "failed", "canceled"]);
 
 const currentThreads = computed<readonly ThreadDto[]>(() =>
@@ -405,6 +440,15 @@ async function deleteItem(id: string): Promise<void> {
   }
 }
 
+async function acknowledgeItem(id: string): Promise<void> {
+  acknowledgingId.value = id;
+  try {
+    await store.acknowledge(id);
+  } finally {
+    acknowledgingId.value = null;
+  }
+}
+
 function serverLabel(appServerId: string): string {
   return appServers.appServers.find((server) => server.id === appServerId)?.name ?? appServerId;
 }
@@ -464,9 +508,55 @@ function statusSummary(item: ScheduledMessageDto): string {
         : `Failed after ${item.attemptCount} attempt${item.attemptCount === 1 ? "" : "s"}: ${item.lastError}`;
     case "canceled":
       return "Canceled";
+    case "acknowledged":
+      return "Acknowledged";
     default:
       return item.status;
   }
+}
+
+function dragEnterDraft(event: DragEvent, target: "create" | "edit"): void {
+  updateDraftDropTarget(event, target);
+}
+
+function dragOverDraft(event: DragEvent, target: "create" | "edit"): void {
+  updateDraftDropTarget(event, target);
+}
+
+function dragLeaveDraft(target: "create" | "edit"): void {
+  setDraftDropTarget(target, false);
+}
+
+function dropIntoDraft(event: DragEvent, target: "create" | "edit"): void {
+  const droppedText = readMessageTextDrop(event.dataTransfer);
+  setDraftDropTarget(target, false);
+  if (droppedText.trim().length === 0) {
+    return;
+  }
+
+  if (target === "create") {
+    draftText.value = appendDroppedText(draftText.value, droppedText);
+    return;
+  }
+
+  editText.value = appendDroppedText(editText.value, droppedText);
+}
+
+function updateDraftDropTarget(event: DragEvent, target: "create" | "edit"): void {
+  const allowed = canDropMessageText(event.dataTransfer);
+  setDraftDropTarget(target, allowed);
+  if (allowed && event.dataTransfer !== null) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+}
+
+function setDraftDropTarget(target: "create" | "edit", active: boolean): void {
+  if (target === "create") {
+    createDropTarget.value = active;
+    return;
+  }
+
+  editDropTarget.value = active;
 }
 </script>
 
@@ -525,6 +615,19 @@ function statusSummary(item: ScheduledMessageDto): string {
   border: 1px solid var(--border-list);
   border-radius: 0.95rem;
   background: var(--bg-row-subtle);
+}
+
+.scheduled-message-drop-zone {
+  border-radius: 0.95rem;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease,
+    border-color 120ms ease;
+}
+
+.scheduled-message-drop-zone.is-drop-target {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-primary) 26%, transparent);
 }
 
 .scheduled-messages-form-grid,

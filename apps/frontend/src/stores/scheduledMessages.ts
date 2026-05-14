@@ -67,6 +67,17 @@ export const useScheduledMessageStore = defineStore("scheduledMessages", {
       }
     },
 
+    async acknowledge(id: string): Promise<ScheduledMessageDto | null> {
+      try {
+        const item = await apiClient.acknowledgeScheduledMessage(id);
+        this.removeLocal(id);
+        return item;
+      } catch (error) {
+        notifyError(error, "Failed to acknowledge scheduled message");
+        return null;
+      }
+    },
+
     async remove(id: string): Promise<boolean> {
       try {
         await apiClient.deleteScheduledMessage(id);
@@ -101,7 +112,8 @@ function sortScheduledMessages(items: readonly ScheduledMessageDto[]): Scheduled
     sending: 1,
     failed: 2,
     sent: 3,
-    canceled: 4
+    canceled: 4,
+    acknowledged: 5
   };
 
   return [...items].sort((left, right) => {

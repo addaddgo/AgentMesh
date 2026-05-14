@@ -498,6 +498,16 @@ export class ApiClient {
     return response.item;
   }
 
+  public async acknowledgeScheduledMessage(id: string): Promise<ScheduledMessageDto> {
+    const response = await this.request<{ readonly item: ScheduledMessageDto }>(
+      `/api/scheduled-messages/${encodeURIComponent(id)}/acknowledge`,
+      {
+        method: "POST"
+      }
+    );
+    return response.item;
+  }
+
   public async deleteScheduledMessage(id: string): Promise<ScheduledMessageDeleteResponse> {
     return this.request<ScheduledMessageDeleteResponse>(
       `/api/scheduled-messages/${encodeURIComponent(id)}`,

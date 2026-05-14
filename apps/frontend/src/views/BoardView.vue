@@ -42,20 +42,22 @@
             scheduledMessagesPanelVisible
           "
         >
-          <TodoPanel v-if="todoPanelVisible" key="todo" class="thread-card" @close="todoPanelVisible = false" />
-          <WorkspaceStatsPanel v-if="statsPanelVisible" key="stats" class="thread-card" @close="statsPanelVisible = false" />
-          <AccountLimitsPanel
-            v-if="accountLimitsPanelVisible"
-            key="account-limits"
-            class="thread-card"
-            @close="accountLimitsPanelVisible = false"
-          />
-          <ScheduledMessagesPanel
+          <article v-if="todoPanelVisible" key="todo" class="thread-card">
+            <TodoPanel @close="todoPanelVisible = false" />
+          </article>
+          <article v-if="statsPanelVisible" key="stats" class="thread-card">
+            <WorkspaceStatsPanel @close="statsPanelVisible = false" />
+          </article>
+          <article v-if="accountLimitsPanelVisible" key="account-limits" class="thread-card">
+            <AccountLimitsPanel @close="accountLimitsPanelVisible = false" />
+          </article>
+          <article
             v-if="scheduledMessagesPanelVisible"
             key="scheduled-messages"
             class="thread-card"
-            @close="scheduledMessagesPanelVisible = false"
-          />
+          >
+            <ScheduledMessagesPanel @close="scheduledMessagesPanelVisible = false" />
+          </article>
         </template>
         <template v-for="group in workspaceGroups" :key="group.appServerId">
           <article

@@ -59,6 +59,14 @@
           />
           <el-button
             size="small"
+            :icon="ArrowDown"
+            circle
+            title="Scroll to bottom"
+            aria-label="Scroll to bottom"
+            @click="scrollMessagesToBottom"
+          />
+          <el-button
+            size="small"
             :icon="Document"
             :loading="rawEventsLoading"
             circle
@@ -95,119 +103,13 @@
         />
       </el-dialog>
 
-      <div ref="scrollContainer" class="message-list" @click="handleMessageListClick">
-        <article
-          v-for="(message, index) in displayedMessages"
-          :key="message.id"
-          class="message-card"
-          :class="message.role"
-        >
-          <div v-if="canDragMessage(message)" class="message-actions">
-            <button
-              class="message-drag-handle"
-              type="button"
-              draggable="true"
-              title="Drag message text"
-              aria-label="Drag message text"
-              @dragstart="dragMessage($event, message)"
-            >
-              <el-icon><Rank /></el-icon>
-            </button>
-          </div>
-          <div v-if="message.status !== 'completed'" class="message-meta">
-            <el-tag size="small">{{ message.status }}</el-tag>
-          </div>
-          <template v-for="(part, partIndex) in message.parts" :key="`${message.id}-${partIndex}`">
-            <div
-              v-if="part.type === 'markdown'"
-              class="markdown-part"
-              v-html="renderMarkdown(part.text)"
-            />
-            <figure v-else-if="part.type === 'image'" class="image-part">
-              <img
-                v-if="part.url !== undefined"
-                :src="part.url"
-                alt="Codex image attachment"
-                loading="lazy"
-                decoding="async"
-              />
-              <figcaption>
-                {{ part.workspacePath ?? "Image attachment" }}
-              </figcaption>
-            </figure>
-            <el-alert
-              v-else-if="part.type === 'error'"
-              :title="part.message"
-              type="error"
-              :closable="false"
-            >
-              <pre v-if="part.raw !== undefined">{{ formatJson(part.raw) }}</pre>
-            </el-alert>
-            <details v-else-if="part.type === 'approval'" class="part-card approval-part" open>
-              <summary>
-                Approval · {{ part.kind }}
-                <el-tag size="small">{{ approvalPartStatus(part.approvalId, part.status) }}</el-tag>
-              </summary>
-              <pre>{{ formatJson(part.payload) }}</pre>
-              <div
-                v-if="approvalPartStatus(part.approvalId, part.status) === 'pending'"
-                class="part-actions"
-              >
-                <el-button
-                  size="small"
-                  type="primary"
-                  :icon="Check"
-                  :loading="approvals.isResponding(part.approvalId)"
-                  :disabled="approvals.isResponding(part.approvalId)"
-                  circle
-                  title="Approve"
-                  aria-label="Approve"
-                  @click="respondApproval(part.approvalId, 'approve')"
-                />
-                <el-button
-                  size="small"
-                  type="danger"
-                  :icon="CloseBold"
-                  :loading="approvals.isResponding(part.approvalId)"
-                  :disabled="approvals.isResponding(part.approvalId)"
-                  circle
-                  title="Deny"
-                  aria-label="Deny"
-                  @click="respondApproval(part.approvalId, 'deny')"
-                />
-              </div>
-            </details>
-            <details v-else-if="part.type === 'diff'" class="part-card">
-              <summary>Diff</summary>
-              <pre>{{ part.text }}</pre>
-            </details>
-            <details v-else-if="part.type === 'tool_call'" class="part-card">
-              <summary>
-                Tool call · {{ part.toolName }}
-                <el-tag size="small">{{ part.status }}</el-tag>
-              </summary>
-              <pre>{{ formatJson(part.input) }}</pre>
-            </details>
-            <details v-else-if="part.type === 'tool_result'" class="part-card">
-              <summary>
-                Tool result · {{ part.callId }}
-                <el-tag size="small">{{ part.status }}</el-tag>
-              </summary>
-              <pre>{{ formatJson(part.output) }}</pre>
-            </details>
-            <details v-else class="part-card">
-              <summary>Event · {{ part.eventType }}</summary>
-              <pre>{{ formatJson(part.raw) }}</pre>
-            </details>
-          </template>
-          <footer v-if="message.role === 'assistant'" class="message-time">
-            <span>{{ formatMessageTime(message.createdAt) }}</span>
-            <span>{{
-              formatMessageDelta(displayedMessages[index - 1]?.createdAt ?? null, message.createdAt)
-            }}</span>
-          </footer>
-        </article>
-      </div>
+      <ThreadMessageVirtualList
+        ref="messageVirtualList"
+        :messages="displayedMessages"
+        :render-markdown="renderMarkdown"
+        :show-user-messages="showUserMessages"
+        @open-workspace-path="openWorkspacePath"
+      />
 
       <div
         class="composer"
@@ -309,22 +211,6 @@
           </span>
           <div class="composer-button-group">
             <el-button
-              :icon="ArrowUp"
-              :disabled="!canBrowseHistoryUp"
-              circle
-              title="Previous input"
-              aria-label="Previous input"
-              @click="browseComposerHistory(-1)"
-            />
-            <el-button
-              :icon="ArrowDown"
-              :disabled="!canBrowseHistoryDown"
-              circle
-              title="Next input"
-              aria-label="Next input"
-              @click="browseComposerHistory(1)"
-            />
-            <el-button
               v-if="isWorking"
               class="thread-stop-button"
               :icon="VideoPause"
@@ -399,15 +285,12 @@
 <script setup lang="ts">
 import {
   ArrowDown,
-  ArrowUp,
-  Check,
   CloseBold,
   Delete,
   Document,
   EditPen,
   PictureFilled,
   Promotion,
-  Rank,
   SwitchButton,
   VideoPause
 } from "@element-plus/icons-vue";
@@ -444,14 +327,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 
 import { apiClient } from "../api/client";
 import ApprovalCard from "./ApprovalCard.vue";
+import ThreadMessageVirtualList from "./ThreadMessageVirtualList.vue";
 import { useApprovalStore } from "../stores/approvals";
 import { notifyError, notifyInfo } from "../stores/errors";
 import {
   appendDroppedText,
   canDropMessageText,
-  readMessageTextDrop,
-  textForMessageDrag,
-  writeMessageTextDrag
+  readMessageTextDrop
 } from "../utils/messageDragDrop";
 
 const MAX_ATTACHMENTS = 5;
@@ -518,8 +400,8 @@ const emit = defineEmits<{
 }>();
 
 const approvals = useApprovalStore();
-const scrollContainer = ref<HTMLElement | null>(null);
 const editorHost = ref<HTMLElement | null>(null);
+const messageVirtualList = ref<InstanceType<typeof ThreadMessageVirtualList> | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const fileSearchInput = ref<HTMLInputElement | null>(null);
 const debugDrawerOpen = ref(false);
@@ -559,6 +441,7 @@ let historyInsertedRange: { from: number; to: number } | null = null;
 const commandCompletionCache = new Map<string, readonly CodexCommandDto[]>();
 const skillCompletionCache = new Map<string, readonly SkillDto[]>();
 const commandOptionCompletionCache = new Map<string, readonly CodexCommandOptionDto[]>();
+const markdownRenderCache = new Map<string, string>();
 
 const disabledReason = computed(() => {
   if (props.thread?.isGone === true) {
@@ -702,19 +585,6 @@ const fileSearchEmptyState = computed(() => {
 });
 const selectedFileSearchResult = computed<FileSearchResult | null>(
   () => fileSearchResults.value[fileSearchSelectedIndex.value] ?? null
-);
-watch(
-  () => props.messages.length,
-  async (nextLength, previousLength) => {
-    if (nextLength <= previousLength) {
-      return;
-    }
-
-    await nextTick();
-    if (scrollContainer.value !== null) {
-      scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight;
-    }
-  }
 );
 
 onMounted(() => {
@@ -968,19 +838,12 @@ watch(
   { immediate: true }
 );
 
-function dragMessage(event: DragEvent, message: ChatMessage): void {
-  const text = textForMessageDrag(message);
-  if (event.dataTransfer === null || text.trim().length === 0) {
-    event.preventDefault();
-    return;
+watch(
+  () => props.appServer?.workspace ?? null,
+  () => {
+    markdownRenderCache.clear();
   }
-
-  writeMessageTextDrag(event.dataTransfer, text);
-}
-
-function canDragMessage(message: ChatMessage): boolean {
-  return textForMessageDrag(message).trim().length > 0;
-}
+);
 
 function completeCommandOrSkill(
   context: CompletionContext
@@ -1661,6 +1524,10 @@ async function openDebugDrawer(): Promise<void> {
   }
 }
 
+function scrollMessagesToBottom(): void {
+  messageVirtualList.value?.scrollToBottom();
+}
+
 async function respondApproval(id: string, decision: ApprovalDecision): Promise<void> {
   await approvals.respond(id, decision);
   dismissedApprovalIds.value = new Set([...dismissedApprovalIds.value, id]);
@@ -1727,12 +1594,25 @@ async function stopThreadWork(): Promise<void> {
   }
 }
 
-function approvalPartStatus(approvalId: string, fallback: string): string {
-  return approvals.approvals.find((approval) => approval.id === approvalId)?.status ?? fallback;
-}
-
 function renderMarkdown(markdown: string): string {
-  return markdownRenderer.render(withWorkspaceLinks(markdown));
+  const workspaceKey = props.appServer?.workspace ?? "";
+  const cacheKey = `${workspaceKey}\u0000${markdown}`;
+  const cached = markdownRenderCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const rendered = markdownRenderer.render(withWorkspaceLinks(markdown));
+  markdownRenderCache.set(cacheKey, rendered);
+
+  if (markdownRenderCache.size > 500) {
+    const oldestKey = markdownRenderCache.keys().next().value;
+    if (typeof oldestKey === "string") {
+      markdownRenderCache.delete(oldestKey);
+    }
+  }
+
+  return rendered;
 }
 
 function withWorkspaceLinks(markdown: string): string {
@@ -1775,7 +1655,6 @@ function workspacePathFromHref(href: string): string | null {
     return decodeURIComponent(href.slice(WORKSPACE_LINK_PREFIX.length));
   }
 
-  // Leave normal web links alone.
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(href)) {
     return null;
   }
@@ -1783,23 +1662,7 @@ function workspacePathFromHref(href: string): string | null {
   return toWorkspaceRelativePath(href);
 }
 
-async function handleMessageListClick(event: MouseEvent): Promise<void> {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) {
-    return;
-  }
-
-  const link = target.closest("a");
-  if (!(link instanceof HTMLAnchorElement)) {
-    return;
-  }
-
-  const workspacePath = link.dataset.workspacePath ?? workspacePathFromHref(link.getAttribute("href") ?? "");
-  if (workspacePath === null || workspacePath.length === 0) {
-    return;
-  }
-
-  event.preventDefault();
+async function openWorkspacePath(workspacePath: string): Promise<void> {
   const appServerId = props.appServer?.id;
   if (appServerId === undefined) {
     return;
@@ -1836,34 +1699,6 @@ function formatRawJson(value: string): string {
 
 function formatTimestamp(value: number): string {
   return new Date(value).toLocaleString();
-}
-
-function formatMessageTime(value: number): string {
-  return new Date(value).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit"
-  });
-}
-
-function formatMessageDelta(previous: number | null, current: number): string {
-  if (previous === null) {
-    return "first reply";
-  }
-
-  const seconds = Math.max(0, Math.round((current - previous) / 1000));
-  if (seconds < 60) {
-    return `+${seconds}s`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  if (minutes < 60) {
-    return remainingSeconds === 0 ? `+${minutes}m` : `+${minutes}m ${remainingSeconds}s`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes === 0 ? `+${hours}h` : `+${hours}h ${remainingMinutes}m`;
 }
 
 function rankWorkspaceSearchResults(

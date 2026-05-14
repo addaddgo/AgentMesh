@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import type {
+  ScheduledMessageAcknowledgeResponse,
   ScheduledMessageCancelResponse,
   ScheduledMessageDeleteResponse,
   ScheduledMessageCreateRequest,
@@ -60,6 +61,15 @@ export async function registerScheduledMessageRoutes(app: FastifyInstance): Prom
       const { id } = request.params as z.infer<typeof scheduledMessageParamsSchema>;
       const body = request.body as ScheduledMessageUpdateRequest;
       return { item: app.scheduledMessageService.update(id, body) };
+    }
+  );
+
+  app.post(
+    "/api/scheduled-messages/:id/acknowledge",
+    { preHandler: validateParams(scheduledMessageParamsSchema) },
+    async (request): Promise<ScheduledMessageAcknowledgeResponse> => {
+      const { id } = request.params as z.infer<typeof scheduledMessageParamsSchema>;
+      return { item: app.scheduledMessageService.acknowledge(id) };
     }
   );
 

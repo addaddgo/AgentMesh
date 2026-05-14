@@ -110,6 +110,16 @@ export const useThreadStore = defineStore("threads", {
         index === -1
           ? [...threads, thread]
           : threads.map((existing) => (existing.id === thread.id ? thread : existing));
+    },
+
+    removeAppServer(appServerId: string): string[] {
+      const removedThreadIds = (this.byAppServerId[appServerId] ?? []).map((thread) => thread.id);
+      delete this.byAppServerId[appServerId];
+      delete this.loadingByAppServerId[appServerId];
+      delete this.openThreadIdsByAppServerId[appServerId];
+      delete this.focusedThreadIdByAppServerId[appServerId];
+      useMessageStore().removeThreads(removedThreadIds);
+      return removedThreadIds;
     }
   }
 });

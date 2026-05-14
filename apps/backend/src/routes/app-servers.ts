@@ -135,7 +135,8 @@ export async function registerAppServerRoutes(app: FastifyInstance): Promise<voi
     { preHandler: validateParams(appServerParamsSchema) },
     async (request, reply) => {
       const { id } = request.params as z.infer<typeof appServerParamsSchema>;
-      service.delete(id);
+      await app.appServerLifecycle.stop(id);
+      service.deleteWorkspaceData(id);
       reply.code(204);
     }
   );

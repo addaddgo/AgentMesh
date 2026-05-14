@@ -211,6 +211,15 @@ export class CodexJsonRpcTransport {
     child: ChildProcessWithoutNullStreams,
     requestTimeoutMs?: number
   ): CodexJsonRpcTransport {
+    let emittedClose = false;
+    const emitClose = (exit: CodexProcessExit, handler: (exit: CodexProcessExit) => void): void => {
+      if (emittedClose) {
+        return;
+      }
+      emittedClose = true;
+      handler(exit);
+    };
+
     return new CodexJsonRpcTransport({
       stdin: child.stdin,
       stdout: child.stdout,
@@ -219,7 +228,10 @@ export class CodexJsonRpcTransport {
       },
       onProcessClose: (handler) => {
         child.once("close", (code, signal) => {
-          handler({ code, signal });
+          emitClose({ code, signal }, handler);
+        });
+        child.once("error", () => {
+          emitClose({ code: 127, signal: null }, handler);
         });
       },
       requestTimeoutMs

@@ -100,6 +100,27 @@ export const useMessageStore = defineStore("messages", {
 
     upsertTurn(turn: TurnDto): void {
       this.turnsById[turn.id] = turn;
+    },
+
+    removeThreads(threadIds: readonly string[]): void {
+      const staleThreadIds = new Set(threadIds);
+
+      for (const threadId of staleThreadIds) {
+        delete this.byThreadId[threadId];
+        delete this.loadingByThreadId[threadId];
+
+        const queueItemIds = this.queueItemIdsByThreadId[threadId] ?? [];
+        for (const queueItemId of queueItemIds) {
+          delete this.queueItemsById[queueItemId];
+        }
+        delete this.queueItemIdsByThreadId[threadId];
+      }
+
+      for (const [turnId, turn] of Object.entries(this.turnsById)) {
+        if (staleThreadIds.has(turn.threadId)) {
+          delete this.turnsById[turnId];
+        }
+      }
     }
   }
 });

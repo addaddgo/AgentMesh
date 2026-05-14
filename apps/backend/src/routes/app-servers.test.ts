@@ -60,7 +60,9 @@ describe("app-server configuration API", () => {
   });
 
   it("rejects duplicate names", async () => {
-    const { app } = await setup();
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace-one");
+    fs.mkdirSync(workspace, { recursive: true });
 
     const first = await app.inject({
       method: "POST",
@@ -68,7 +70,7 @@ describe("app-server configuration API", () => {
       payload: {
         name: "primary",
         hostKind: "local",
-        workspace: "/workspace/one"
+        workspace
       }
     });
     const duplicate = await app.inject({
@@ -93,7 +95,9 @@ describe("app-server configuration API", () => {
   });
 
   it("rejects duplicate host and workspace identities", async () => {
-    const { app } = await setup();
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace-project");
+    fs.mkdirSync(workspace, { recursive: true });
 
     await app.inject({
       method: "POST",
@@ -101,7 +105,7 @@ describe("app-server configuration API", () => {
       payload: {
         name: "first",
         hostKind: "local",
-        workspace: "/workspace/project"
+        workspace
       }
     });
     const duplicate = await app.inject({
@@ -111,7 +115,7 @@ describe("app-server configuration API", () => {
         name: "second",
         hostKind: "local",
         host: "127.0.0.1",
-        workspace: "/workspace/project/"
+        workspace: `${workspace}/`
       }
     });
 
@@ -125,14 +129,16 @@ describe("app-server configuration API", () => {
   });
 
   it("validates local and SSH configuration", async () => {
-    const { app } = await setup();
+    const { app, tempDir } = await setup();
+    const localWorkspace = path.join(tempDir, "workspace-local");
+    fs.mkdirSync(localWorkspace, { recursive: true });
 
     const localWithSshFields = await app.inject({
       method: "POST",
       url: "/api/app-servers",
       payload: {
         hostKind: "local",
-        workspace: "/workspace/local",
+        workspace: localWorkspace,
         sshUser: "codex"
       }
     });
@@ -173,8 +179,10 @@ describe("app-server configuration API", () => {
   });
 
   it("stores observation stack settings on the app server", async () => {
-    const { app, config } = await setup();
+    const { app, config, tempDir } = await setup();
     const skillDir = path.join(config.skillsRoot, "observe-logs");
+    const workspace = path.join(tempDir, "workspace-project");
+    fs.mkdirSync(workspace, { recursive: true });
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(
       path.join(skillDir, "SKILL.md"),
@@ -186,7 +194,7 @@ describe("app-server configuration API", () => {
       url: "/api/app-servers",
       payload: {
         hostKind: "local",
-        workspace: "/workspace/project",
+        workspace,
         observationPrompt: "Use the workspace observation stack first.",
         activeObservationSkillNames: ["observe-logs"]
       }
@@ -236,15 +244,41 @@ describe("app-server configuration API", () => {
     });
   });
 
-  it("lists, patches, and deletes app servers", async () => {
-    const { app } = await setup();
+  it("rejects local workspaces that do not exist during create", async () => {
+    const { app, tempDir } = await setup();
+    const missingWorkspace = path.join(tempDir, "missing-workspace");
 
     const created = await app.inject({
       method: "POST",
       url: "/api/app-servers",
       payload: {
         hostKind: "local",
-        workspace: "/workspace/project"
+        workspace: missingWorkspace
+      }
+    });
+
+    expect(created.statusCode).toBe(400);
+    expect(created.json()).toMatchObject({
+      error: {
+        code: "validation_error",
+        message: "Workspace path does not exist"
+      }
+    });
+  });
+
+  it("lists, patches, and deletes app servers", async () => {
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace-project");
+    const renamedWorkspace = path.join(tempDir, "workspace-renamed");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(renamedWorkspace, { recursive: true });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace
       }
     });
     const id = created.json<{ id: string }>().id;
@@ -254,7 +288,7 @@ describe("app-server configuration API", () => {
       url: `/api/app-servers/${id}`,
       payload: {
         name: "renamed",
-        workspace: "/workspace/renamed"
+        workspace: renamedWorkspace
       }
     });
     const listed = await app.inject({
@@ -274,7 +308,7 @@ describe("app-server configuration API", () => {
     expect(patched.json()).toMatchObject({
       id,
       name: "renamed",
-      workspace: "/workspace/renamed",
+      workspace: renamedWorkspace,
       status: "offline",
       lastError: null
     });
@@ -283,6 +317,185 @@ describe("app-server configuration API", () => {
     });
     expect(deleted.statusCode).toBe(204);
     expect(listedAfterDelete.json()).toEqual({ appServers: [] });
+  });
+
+  it("deletes workspace-related database rows and prunes board layouts", async () => {
+    const { app, tempDir } = await setup();
+    const now = Date.now();
+    const workspace = path.join(tempDir, "workspace-project");
+    fs.mkdirSync(workspace, { recursive: true });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace
+      }
+    });
+    const appServerId = created.json<{ id: string }>().id;
+    const threadId = "thread-1";
+    const turnId = "turn-1";
+    const messageId = "message-1";
+
+    app.database.sqlite
+      .prepare(
+        `
+          INSERT INTO threads (
+            id, app_server_id, codex_thread_id, thread_name, agent_kind, parent_thread_id,
+            parent_codex_thread_id, agent_name, title, status, cwd, is_current, is_gone,
+            imported_at, last_seen_at, raw_metadata_json, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'main', NULL, NULL, NULL, NULL, 'idle', ?, 1, 0, ?, ?, '{}', ?, ?)
+        `
+      )
+      .run(threadId, appServerId, "codex-thread-1", "main", workspace, now, now, now, now);
+    app.database.sqlite
+      .prepare(
+        "INSERT INTO thread_settings (thread_id, model, effort, approval_policy_json, sandbox_policy_json, collaboration_mode_json, updated_at) VALUES (?, NULL, NULL, NULL, NULL, NULL, ?)"
+      )
+      .run(threadId, now);
+    app.database.sqlite
+      .prepare(
+        "INSERT INTO turns (id, app_server_id, thread_id, codex_turn_id, trigger_message_id, status, started_at, completed_at, error, imported_from_id, created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, 'completed', ?, ?, NULL, NULL, ?, ?)"
+      )
+      .run(turnId, appServerId, threadId, now, now, now, now);
+    app.database.sqlite
+      .prepare(
+        "INSERT INTO messages (id, app_server_id, thread_id, turn_id, role, status, parts_json, raw_event_ids_json, imported_from_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'user', 'completed', '[]', '[]', NULL, ?, ?)"
+      )
+      .run(messageId, appServerId, threadId, turnId, now, now);
+    app.database.sqlite
+      .prepare(
+        "INSERT INTO approvals (id, app_server_id, thread_id, turn_id, codex_request_id, kind, status, request_json, response_json, error, created_at, updated_at) VALUES ('approval-1', ?, ?, ?, 'req-1', 'exec', 'failed', '{}', NULL, 'x', ?, ?)"
+      )
+      .run(appServerId, threadId, turnId, now, now);
+    app.database.sqlite
+      .prepare(
+        "INSERT INTO queue_items (id, app_server_id, thread_id, kind, status, payload_json, result_json, error, created_at, updated_at) VALUES ('queue-1', ?, ?, 'send_message', 'failed', '{}', NULL, 'x', ?, ?)"
+      )
+      .run(appServerId, threadId, now, now);
+    app.database.sqlite
+      .prepare(
+        "INSERT INTO codex_events (id, app_server_id, thread_id, turn_id, event_type, raw_json, created_at) VALUES ('event-1', ?, ?, ?, 'test', '{}', ?)"
+      )
+      .run(appServerId, threadId, turnId, now);
+    app.database.sqlite
+      .prepare(
+        "INSERT INTO thread_drafts (app_server_id, thread_id, draft_markdown, updated_at) VALUES (?, ?, 'draft', ?)"
+      )
+      .run(appServerId, threadId, now);
+    app.database.sqlite
+      .prepare(
+        "INSERT INTO scheduled_messages (id, app_server_id, thread_id, text, run_at, status, attempt_count, last_error, last_attempt_at, sent_message_id, sent_turn_id, created_at, updated_at) VALUES ('scheduled-1', ?, ?, 'hello', ?, 'scheduled', 0, NULL, NULL, NULL, NULL, ?, ?)"
+      )
+      .run(appServerId, threadId, now + 60_000, now, now);
+    app.database.sqlite
+      .prepare(
+        "INSERT INTO ui_layouts (id, kind, owner_id, tree_json, updated_at) VALUES ('threads-layout', 'threads', ?, '{\"type\":\"leaf\",\"id\":\"leaf-thread\",\"threadId\":\"thread-1\"}', ?)"
+      )
+      .run(appServerId, now);
+    app.database.sqlite
+      .prepare(
+        "INSERT INTO ui_layouts (id, kind, owner_id, tree_json, updated_at) VALUES ('boards:root', 'boards', 'root', ?, ?)"
+      )
+      .run(
+        JSON.stringify({
+          type: "split",
+          id: "split-1",
+          direction: "horizontal",
+          ratio: 0.5,
+          first: { type: "leaf", id: "leaf-thread", threadId },
+          second: { type: "leaf", id: "leaf-keep", threadId: "keep-thread" }
+        }),
+        now
+      );
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/app-servers/${appServerId}`
+    });
+
+    expect(deleted.statusCode).toBe(204);
+    expect(app.database.sqlite.prepare("SELECT COUNT(*) AS count FROM app_servers").get()).toEqual({
+      count: 0
+    });
+    expect(app.database.sqlite.prepare("SELECT COUNT(*) AS count FROM threads").get()).toEqual({
+      count: 0
+    });
+    expect(
+      app.database.sqlite.prepare("SELECT COUNT(*) AS count FROM thread_settings").get()
+    ).toEqual({ count: 0 });
+    expect(app.database.sqlite.prepare("SELECT COUNT(*) AS count FROM turns").get()).toEqual({
+      count: 0
+    });
+    expect(app.database.sqlite.prepare("SELECT COUNT(*) AS count FROM messages").get()).toEqual({
+      count: 0
+    });
+    expect(app.database.sqlite.prepare("SELECT COUNT(*) AS count FROM approvals").get()).toEqual({
+      count: 0
+    });
+    expect(app.database.sqlite.prepare("SELECT COUNT(*) AS count FROM queue_items").get()).toEqual({
+      count: 0
+    });
+    expect(app.database.sqlite.prepare("SELECT COUNT(*) AS count FROM codex_events").get()).toEqual({
+      count: 0
+    });
+    expect(
+      app.database.sqlite.prepare("SELECT COUNT(*) AS count FROM thread_drafts").get()
+    ).toEqual({ count: 0 });
+    expect(
+      app.database.sqlite.prepare("SELECT COUNT(*) AS count FROM scheduled_messages").get()
+    ).toEqual({ count: 0 });
+    expect(
+      app.database.sqlite
+        .prepare("SELECT COUNT(*) AS count FROM ui_layouts WHERE kind = 'threads' AND owner_id = ?")
+        .get(appServerId)
+    ).toEqual({ count: 0 });
+    expect(
+      app.database.sqlite.prepare("SELECT tree_json FROM ui_layouts WHERE id = 'boards:root'").get()
+    ).toEqual({
+      tree_json: JSON.stringify({ type: "leaf", id: "leaf-keep", threadId: "keep-thread" })
+    });
+  });
+
+  it("stops a running app server before deleting the workspace", async () => {
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    const scriptPath = createFakeCodexScript(tempDir);
+    fs.mkdirSync(workspace);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace,
+        command: `${process.execPath} ${scriptPath}`
+      }
+    });
+    const appServerId = created.json<{ id: string }>().id;
+
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/api/app-servers/${appServerId}/start`
+        })
+      ).statusCode
+    ).toBe(200);
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/app-servers/${appServerId}`
+    });
+
+    expect(deleted.statusCode).toBe(204);
+    expect(
+      await app.inject({
+        method: "POST",
+        url: `/api/app-servers/${appServerId}/stop`
+      })
+    ).toMatchObject({ statusCode: 404 });
   });
 
   it("starts and stops a local app-server process from the configured workspace", async () => {
@@ -329,6 +542,37 @@ describe("app-server configuration API", () => {
     });
   });
 
+  it("rechecks that a local workspace still exists before start", async () => {
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    fs.mkdirSync(workspace);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace
+      }
+    });
+    const id = created.json<{ id: string }>().id;
+
+    fs.rmSync(workspace, { recursive: true, force: true });
+
+    const started = await app.inject({
+      method: "POST",
+      url: `/api/app-servers/${id}/start`
+    });
+
+    expect(started.statusCode).toBe(400);
+    expect(started.json()).toMatchObject({
+      error: {
+        code: "validation_error",
+        message: "Workspace path does not exist"
+      }
+    });
+  });
+
   it("restarts an app-server by stopping and starting the process again", async () => {
     const { app, tempDir } = await setup();
     const workspace = path.join(tempDir, "workspace");
@@ -370,12 +614,14 @@ describe("app-server configuration API", () => {
 
   it("treats app-servers as offline after backend restart without auto-starting", async () => {
     const first = await setup();
+    const workspace = path.join(first.tempDir, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
     const created = await first.app.inject({
       method: "POST",
       url: "/api/app-servers",
       payload: {
         hostKind: "local",
-        workspace: path.join(first.tempDir, "workspace")
+        workspace
       }
     });
     const id = created.json<{ id: string }>().id;

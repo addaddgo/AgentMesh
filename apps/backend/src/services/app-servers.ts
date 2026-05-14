@@ -10,6 +10,7 @@ import {
   buildResolvedObservationPrompt,
   normalizeObservationSkillNames
 } from "./observation-stack.js";
+import { validateLocalWorkspaceExists } from "./workspace-validation.js";
 
 const DEFAULT_COMMAND = "codex app-server";
 const LOCAL_HOST = "localhost";
@@ -61,6 +62,11 @@ type NormalizedAppServerConfig = {
   readonly environment: Readonly<Record<string, string>>;
   readonly observationPrompt: string | null;
   readonly activeObservationSkillNames: readonly string[];
+};
+
+type UiLayoutRow = {
+  readonly id: string;
+  readonly tree_json: string;
 };
 
 export class AppServerService {
@@ -213,6 +219,46 @@ export class AppServerService {
     return toDto(row);
   }
 
+  public deleteWorkspaceData(id: string): void {
+    const transaction = this.database.sqlite.transaction((appServerId: string) => {
+      const threadIds = this.database.sqlite
+        .prepare("SELECT id FROM threads WHERE app_server_id = ?")
+        .all(appServerId) as Array<{ readonly id: string }>;
+      const staleThreadIds = new Set(threadIds.map((row) => row.id));
+
+      if (staleThreadIds.size > 0) {
+        const boardLayouts = this.database.sqlite
+          .prepare("SELECT id, tree_json FROM ui_layouts WHERE kind = 'boards'")
+          .all() as UiLayoutRow[];
+        const updateBoardLayout = this.database.sqlite.prepare(
+          "UPDATE ui_layouts SET tree_json = ?, updated_at = ? WHERE id = ?"
+        );
+        const now = Date.now();
+
+        for (const layout of boardLayouts) {
+          const prunedJson = pruneBoardLayoutJson(layout.tree_json, staleThreadIds);
+          if (prunedJson !== layout.tree_json) {
+            updateBoardLayout.run(prunedJson, now, layout.id);
+          }
+        }
+      }
+
+      this.database.sqlite
+        .prepare("DELETE FROM ui_layouts WHERE owner_id = ?")
+        .run(appServerId);
+
+      const result = this.database.sqlite
+        .prepare("DELETE FROM app_servers WHERE id = ?")
+        .run(appServerId);
+
+      if (result.changes === 0) {
+        throw new NotFoundError("App server not found");
+      }
+    });
+
+    transaction(id);
+  }
+
   public markAllOfflineAfterBackendRestart(): void {
     this.database.sqlite
       .prepare(
@@ -326,6 +372,58 @@ export class AppServerService {
   }
 }
 
+function pruneBoardLayoutJson(treeJson: string, staleThreadIds: ReadonlySet<string>): string {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(treeJson);
+  } catch {
+    return treeJson;
+  }
+
+  const pruned = pruneBoardLayoutTree(parsed, staleThreadIds);
+  return JSON.stringify(pruned);
+}
+
+function pruneBoardLayoutTree(
+  value: unknown,
+  staleThreadIds: ReadonlySet<string>
+): unknown | null {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  const node = value as Record<string, unknown>;
+
+  if (node.type === "leaf") {
+    const threadId = typeof node.threadId === "string" ? node.threadId : undefined;
+    if (threadId !== undefined && staleThreadIds.has(threadId)) {
+      return null;
+    }
+    return node;
+  }
+
+  if (node.type !== "split") {
+    return node;
+  }
+
+  const first = pruneBoardLayoutTree(node.first, staleThreadIds);
+  const second = pruneBoardLayoutTree(node.second, staleThreadIds);
+
+  if (first === null) {
+    return second;
+  }
+  if (second === null) {
+    return first;
+  }
+
+  return {
+    ...node,
+    first,
+    second
+  };
+}
+
 function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig {
   const hostKind = input.hostKind;
   const workspace = normalizeWorkspace(input.workspace);
@@ -345,7 +443,7 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
       ]);
     }
 
-    return {
+    const config = {
       name,
       hostKind,
       host: LOCAL_HOST,
@@ -357,6 +455,9 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
       observationPrompt: normalizeNullableText(input.observationPrompt),
       activeObservationSkillNames: normalizeObservationSkillNames(input.activeObservationSkillNames)
     };
+
+    validateLocalWorkspaceExists(config);
+    return config;
   }
 
   const host = input.host?.trim();
@@ -367,7 +468,7 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
     ]);
   }
 
-  return {
+  const config = {
     name,
     hostKind,
     host,
@@ -379,6 +480,9 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
     observationPrompt: normalizeNullableText(input.observationPrompt),
     activeObservationSkillNames: normalizeObservationSkillNames(input.activeObservationSkillNames)
   };
+
+  validateLocalWorkspaceExists(config);
+  return config;
 }
 
 function normalizeWorkspace(workspace: string): string {

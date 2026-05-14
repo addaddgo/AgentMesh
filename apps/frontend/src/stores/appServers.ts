@@ -4,6 +4,7 @@ import { defineStore } from "pinia";
 import { apiClient, type CreateAppServerPayload, type PatchAppServerPayload } from "../api/client";
 import { notifyError } from "./errors";
 import { useThreadStore } from "./threads";
+import { useUiLayoutStore } from "./uiLayout";
 
 type AppServerState = {
   appServers: AppServerDto[];
@@ -62,6 +63,22 @@ export const useAppServerStore = defineStore("appServers", {
       } catch (error) {
         notifyError(error, "Failed to update app server");
         return null;
+      }
+    },
+
+    async delete(id: string): Promise<boolean> {
+      try {
+        await apiClient.deleteAppServer(id);
+        const threadIds = useThreadStore().removeAppServer(id);
+        await useUiLayoutStore().removeAppServerState(id, threadIds);
+        this.appServers = this.appServers.filter((server) => server.id !== id);
+        if (this.selectedAppServerId === id) {
+          this.selectedAppServerId = this.appServers[0]?.id ?? null;
+        }
+        return true;
+      } catch (error) {
+        notifyError(error, "Failed to delete workspace");
+        return false;
       }
     },
 

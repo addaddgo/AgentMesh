@@ -51,3 +51,14 @@ export function notifyApprovalRequired(
     tag: `approval-required:${approval.id}`
   });
 }
+
+export function notifyErrorEvent(title: string, message: string, tag?: string): void {
+  if (browserNotificationPermission() !== "granted") {
+    return;
+  }
+
+  new window.Notification(title, {
+    body: message,
+    tag: tag ?? `error:${title}`
+  });
+}

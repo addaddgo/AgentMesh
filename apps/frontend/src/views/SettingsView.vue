@@ -203,6 +203,16 @@
                 aria-label="Reset"
                 @click="resetForm"
               />
+              <el-button
+                v-if="editingServer !== null"
+                type="danger"
+                :disabled="saving || deleting"
+                :loading="deleting"
+                plain
+                @click="deleteWorkspace"
+              >
+                Delete Workspace
+              </el-button>
             </div>
           </el-form>
 
@@ -253,6 +263,7 @@
 </template>
 
 <script setup lang="ts">
+import { ElMessageBox } from "element-plus";
 import {
   CirclePlus,
   Plus,
@@ -297,6 +308,7 @@ const appServers = useAppServerStore();
 const theme = useThemeStore();
 const editingId = ref<string | null>(null);
 const saving = ref(false);
+const deleting = ref(false);
 const runningAction = ref<"start" | "stop" | "restart" | null>(null);
 const fieldErrors = ref<Record<string, string>>({});
 const formError = ref<string | null>(null);
@@ -479,6 +491,38 @@ async function runLifecycle(action: "start" | "stop" | "restart"): Promise<void>
     }
   } finally {
     runningAction.value = null;
+  }
+}
+
+async function deleteWorkspace(): Promise<void> {
+  const server = editingServer.value;
+  if (server === null || deleting.value) {
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `Delete workspace ${appServerLabel(server)} from AgentMesh? This removes its app-server config and related thread data, but does not delete any files in ${server.workspace}.`,
+      "Delete Workspace",
+      {
+        type: "warning",
+        confirmButtonText: "Delete",
+        cancelButtonText: "Cancel",
+        confirmButtonClass: "el-button--danger"
+      }
+    );
+  } catch {
+    return;
+  }
+
+  deleting.value = true;
+  try {
+    const deleted = await appServers.delete(server.id);
+    if (deleted) {
+      newServer();
+    }
+  } finally {
+    deleting.value = false;
   }
 }
 

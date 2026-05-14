@@ -129,6 +129,36 @@ export const useUiLayoutStore = defineStore("uiLayout", {
 
     setSseState(state: UiLayoutState["sseState"]): void {
       this.sseState = state;
+    },
+
+    async removeAppServerState(
+      appServerId: string,
+      threadIds: readonly string[]
+    ): Promise<void> {
+      this.layouts = this.layouts
+        .filter((layout) => !(layout.kind === "threads" && layout.ownerId === appServerId))
+        .map((layout) =>
+          layout.kind === "boards"
+            ? { ...layout, layoutJson: pruneTreeByThreadIds(layout.layoutJson, threadIds) }
+            : layout
+        );
+
+      for (const threadId of threadIds) {
+        delete this.draftsByThreadId[threadId];
+      }
+
+      delete this.focusedThreadIdByAppServerId[appServerId];
+      if (this.focusedAppServerId === appServerId) {
+        this.focusedAppServerId = null;
+      }
+
+      const boardLayout = this.layouts.find(
+        (layout) => layout.kind === "boards" && layout.ownerId === "root"
+      );
+
+      if (boardLayout !== undefined) {
+        await this.persistTree("boards", "root", boardLayout.layoutJson);
+      }
     }
   }
 });
@@ -233,6 +263,42 @@ function replaceLeaf(
     ...tree,
     first: replaceLeaf(tree.first, targetId, replacement),
     second: replaceLeaf(tree.second, targetId, replacement)
+  };
+}
+
+function pruneTreeByThreadIds(
+  tree: SplitPaneTree | null,
+  threadIds: readonly string[]
+): SplitPaneTree | null {
+  return pruneTreeByThreadIdSet(tree, new Set(threadIds));
+}
+
+function pruneTreeByThreadIdSet(
+  tree: SplitPaneTree | null,
+  staleThreadIds: ReadonlySet<string>
+): SplitPaneTree | null {
+  if (tree === null) {
+    return null;
+  }
+
+  if (tree.type === "leaf") {
+    return tree.threadId !== undefined && staleThreadIds.has(tree.threadId) ? null : tree;
+  }
+
+  const first = pruneTreeByThreadIdSet(tree.first, staleThreadIds);
+  const second = pruneTreeByThreadIdSet(tree.second, staleThreadIds);
+
+  if (first === null) {
+    return second;
+  }
+  if (second === null) {
+    return first;
+  }
+
+  return {
+    ...tree,
+    first,
+    second
   };
 }
 

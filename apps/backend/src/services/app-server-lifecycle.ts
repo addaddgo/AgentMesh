@@ -10,6 +10,7 @@ import { CodexJsonRpcTransport, type CodexProcessExit, type JsonValue, CodexJson
 import type { EventService } from "./events.js";
 import { ThreadSyncService } from "./thread-sync.js";
 import { ThreadStatusCache } from "./thread-status-cache.js";
+import { validateWorkspaceExists } from "./workspace-validation.js";
 
 type RegistryEntry = {
   readonly appServerId: string;
@@ -44,6 +45,13 @@ export class AppServerLifecycleRegistry {
     }
 
     const appServer = this.appServers.get(id);
+    validateWorkspaceExists({
+      hostKind: appServer.hostKind,
+      host: appServer.host,
+      sshUser: appServer.sshUser,
+      sshPort: appServer.sshPort,
+      workspace: appServer.workspace
+    });
     const startedAt = Date.now();
     this.publishStatus(
       this.appServers.setStatus(id, "starting", {
@@ -111,6 +119,13 @@ export class AppServerLifecycleRegistry {
     } catch (error) {
       const message = errorMessage(error);
       this.publishStatus(this.appServers.setStatus(id, "error", { lastError: message }));
+      this.events.publish({
+        type: "error",
+        appServerId: id,
+        payload: {
+          message
+        }
+      });
       entry.expectedStop = true;
       transport.kill("SIGTERM");
       void transport.close();
@@ -199,6 +214,11 @@ export class AppServerLifecycleRegistry {
     entry.exitHandled = true;
     this.stopHealthCheck(entry);
     this.entries.delete(entry.appServerId);
+
+    if (!this.appServerExists(entry.appServerId)) {
+      return;
+    }
+
     this.recordProcessExit(entry.appServerId, exit);
     this.approvals.markPendingForAppServerFailed(
       entry.appServerId,
@@ -264,6 +284,10 @@ export class AppServerLifecycleRegistry {
   }
 
   private recordApprovalHandlingError(appServerId: string, error: unknown): void {
+    if (!this.appServerExists(appServerId)) {
+      return;
+    }
+
     this.database.sqlite
       .prepare(
         `
@@ -293,6 +317,10 @@ export class AppServerLifecycleRegistry {
     appServerId: string,
     error: { readonly message: string; readonly raw: string; readonly receivedAt: number }
   ): void {
+    if (!this.appServerExists(appServerId)) {
+      return;
+    }
+
     this.database.sqlite
       .prepare(
         `
@@ -350,6 +378,12 @@ export class AppServerLifecycleRegistry {
     }
   }
 
+  private appServerExists(id: string): boolean {
+    const row = this.database.sqlite
+      .prepare("SELECT 1 AS present FROM app_servers WHERE id = ?")
+      .get(id) as { readonly present: number } | undefined;
+    return row !== undefined;
+  }
 }
 
 function errorMessage(error: unknown): string {

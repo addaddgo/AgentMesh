@@ -15,7 +15,7 @@ import { notifyApprovalRequired, notifyThreadReady } from "../services/notificat
 import { sseClient, type SseConnectionState } from "../services/sse";
 import { useAppServerStore } from "./appServers";
 import { useApprovalStore } from "./approvals";
-import { notifyError, notifyInfo } from "./errors";
+import { notifyError, notifyErrorMessage, notifyInfo } from "./errors";
 import { useMessageStore } from "./messages";
 import { useThreadReadyStore } from "./threadReady";
 import { useThreadStore } from "./threads";
@@ -28,6 +28,8 @@ type RealtimeState = {
   started: boolean;
   _unsubDispatchers: (() => void) | null;
   notifiedFailedTurnIds: Record<string, true>;
+  notifiedFailedQueueItemIds: Record<string, true>;
+  notifiedAppServerErrorKeys: Record<string, true>;
   notifiedApprovalIds: Record<string, true>;
 };
 
@@ -37,6 +39,8 @@ export const useRealtimeStore = defineStore("realtime", {
     started: false,
     _unsubDispatchers: null,
     notifiedFailedTurnIds: {},
+    notifiedFailedQueueItemIds: {},
+    notifiedAppServerErrorKeys: {},
     notifiedApprovalIds: {}
   }),
 
@@ -122,6 +126,9 @@ export const useRealtimeStore = defineStore("realtime", {
               threads.loadForAppServer(appServerId),
               approvals.load()
             ]);
+            if (appServer?.status === "error" && appServer.lastError !== null) {
+              this.notifyAppServerError(appServer);
+            }
             for (const threadId of threads.openThreadIdsByAppServerId[appServerId] ?? []) {
               this.evaluateReadyTransition(threadId);
             }
@@ -172,6 +179,9 @@ export const useRealtimeStore = defineStore("realtime", {
           const messages = useMessageStore();
           if (item !== null) {
             messages.upsertQueueItem(item);
+            if (item.status === "failed") {
+              this.notifyQueueItemFailed(item);
+            }
             this.evaluateReadyTransition(item.threadId);
           } else if (event.thread_id !== undefined) {
             await messages.loadQueue(event.thread_id);
@@ -245,8 +255,9 @@ export const useRealtimeStore = defineStore("realtime", {
       // --- Error ---
       unsubs.push(
         eventBus.on("error", async (event) => {
-          notifyError(
-            readPayloadField<string>(event.payload, "message") ?? "Backend event error"
+          notifyErrorMessage(
+            readPayloadField<string>(event.payload, "message") ?? "Backend event error",
+            "Backend Error"
           );
         })
       );
@@ -307,11 +318,42 @@ export const useRealtimeStore = defineStore("realtime", {
       this.notifiedApprovalIds[approval.id] = true;
       const threads = useThreadStore();
       const appServers = useAppServerStore();
-      notifyApprovalRequired(
-        approval,
-        threads.threadById(approval.threadId),
-        appServers.appServers.find((candidate) => candidate.id === approval.appServerId) ?? null
+    notifyApprovalRequired(
+      approval,
+      threads.threadById(approval.threadId),
+      appServers.appServers.find((candidate) => candidate.id === approval.appServerId) ?? null
       );
+    },
+
+    notifyQueueItemFailed(item: QueueItemDto): void {
+      if (this.notifiedFailedQueueItemIds[item.id] === true) {
+        return;
+      }
+
+      this.notifiedFailedQueueItemIds[item.id] = true;
+      const threads = useThreadStore();
+      const appServers = useAppServerStore();
+      const thread = threads.threadById(item.threadId);
+      const appServer = appServers.appServers.find((candidate) => candidate.id === item.appServerId);
+      const title =
+        thread === null
+          ? "Workspace task failed"
+          : `${appServer?.name ?? "Workspace"} / ${thread.threadName}`;
+      notifyErrorMessage(item.error ?? "Workspace task failed.", title);
+    },
+
+    notifyAppServerError(appServer: AppServerDto): void {
+      if (appServer.lastError === null) {
+        return;
+      }
+
+      const key = `${appServer.id}:${appServer.lastError}`;
+      if (this.notifiedAppServerErrorKeys[key] === true) {
+        return;
+      }
+
+      this.notifiedAppServerErrorKeys[key] = true;
+      notifyErrorMessage(appServer.lastError, `${appServer.name} failed`);
     }
   }
 });

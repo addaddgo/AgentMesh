@@ -1,6 +1,7 @@
 import { ElNotification } from "element-plus";
 
 import { ApiClientError } from "../api/client";
+import { notifyErrorEvent } from "../services/notifications";
 
 export function notifyError(error: unknown, title = "Request failed"): void {
   const message =
@@ -15,6 +16,20 @@ export function notifyError(error: unknown, title = "Request failed"): void {
     duration: 0,
     showClose: true
   });
+
+  notifyErrorEvent(title, message, `error:${title}:${message}`);
+}
+
+export function notifyErrorMessage(message: string, title = "Request failed"): void {
+  ElNotification({
+    title,
+    message,
+    type: "error",
+    duration: 0,
+    showClose: true
+  });
+
+  notifyErrorEvent(title, message, `error:${title}:${message}`);
 }
 
 export function notifyInfo(message: string, title = "AgentMesh"): void {

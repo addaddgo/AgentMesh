@@ -102,6 +102,13 @@
               <el-input v-model="form.workspace" placeholder="/absolute/path/to/workspace" />
             </el-form-item>
 
+            <el-form-item label="VS Code Path" :error="fieldError('vscodePath')">
+              <el-input
+                v-model="form.vscodePath"
+                placeholder="Optional. Defaults to code"
+              />
+            </el-form-item>
+
             <el-form-item label="Environment" :error="fieldError('environment')">
               <el-input
                 v-model="form.environmentText"
@@ -290,6 +297,7 @@ type AppServerForm = {
   sshPort: number | undefined;
   workspace: string;
   command: string;
+  vscodePath: string;
   environmentText: string;
   observationPrompt: string;
   activeObservationSkillNames: string[];
@@ -343,6 +351,7 @@ function emptyForm(): AppServerForm {
     sshPort: undefined,
     workspace: "",
     command: "",
+    vscodePath: "",
     environmentText: "",
     observationPrompt: "",
     activeObservationSkillNames: []
@@ -367,6 +376,7 @@ function editServer(server: AppServerDto): void {
   form.sshPort = server.sshPort ?? undefined;
   form.workspace = server.workspace;
   form.command = server.command;
+  form.vscodePath = server.vscodePath ?? "";
   form.environmentText = formatEnvironment(server.environment);
   form.observationPrompt = server.observationPrompt ?? "";
   form.activeObservationSkillNames = [...server.activeObservationSkillNames];
@@ -421,6 +431,7 @@ function toPayload(): CreateAppServerPayload {
     workspace: form.workspace,
     ...(form.name.trim().length > 0 ? { name: form.name } : {}),
     ...(form.command.trim().length > 0 ? { command: form.command } : {}),
+    ...(form.vscodePath.trim().length > 0 ? { vscodePath: form.vscodePath } : {}),
     environment: parseEnvironmentText(form.environmentText),
     ...(form.observationPrompt.trim().length > 0
       ? { observationPrompt: form.observationPrompt }

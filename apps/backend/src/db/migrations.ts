@@ -439,6 +439,13 @@ export const MIGRATIONS: readonly Migration[] = [
         ON scheduled_messages (app_server_id, created_at);
     `
   },
+  {
+    id: "0012_app_server_vscode_path",
+    sql: `
+      ALTER TABLE app_servers
+        ADD COLUMN vscode_path TEXT;
+    `
+  },
 ];
 
 export function runMigrations(sqlite: Database): void {

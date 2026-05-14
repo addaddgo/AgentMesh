@@ -13,6 +13,7 @@ import {
 import { validateLocalWorkspaceExists } from "./workspace-validation.js";
 
 const DEFAULT_COMMAND = "codex app-server";
+const DEFAULT_VSCODE_PATH = "code";
 const LOCAL_HOST = "localhost";
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
@@ -24,6 +25,7 @@ export type CreateAppServerInput = {
   readonly sshPort?: number | undefined;
   readonly workspace: string;
   readonly command?: string | undefined;
+  readonly vscodePath?: string | undefined;
   readonly environment?: Record<string, string> | undefined;
   readonly observationPrompt?: string | undefined;
   readonly activeObservationSkillNames?: readonly string[] | undefined;
@@ -40,6 +42,7 @@ type AppServerRow = {
   readonly ssh_port: number | null;
   readonly workspace: string;
   readonly command: string;
+  readonly vscode_path: string | null;
   readonly environment_json: string;
   readonly observation_prompt: string | null;
   readonly active_observation_skills_json: string;
@@ -59,6 +62,7 @@ type NormalizedAppServerConfig = {
   readonly sshPort: number | null;
   readonly workspace: string;
   readonly command: string;
+  readonly vscodePath: string | null;
   readonly environment: Readonly<Record<string, string>>;
   readonly observationPrompt: string | null;
   readonly activeObservationSkillNames: readonly string[];
@@ -104,6 +108,7 @@ export class AppServerService {
             ssh_port,
             workspace,
             command,
+            vscode_path,
             environment_json,
             observation_prompt,
             active_observation_skills_json,
@@ -111,7 +116,7 @@ export class AppServerService {
             last_error,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', NULL, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', NULL, ?, ?)
         `
       )
       .run(
@@ -123,6 +128,7 @@ export class AppServerService {
         config.sshPort,
         config.workspace,
         config.command,
+        config.vscodePath,
         JSON.stringify(config.environment),
         config.observationPrompt,
         JSON.stringify(config.activeObservationSkillNames),
@@ -151,6 +157,7 @@ export class AppServerService {
         nextHostKind === "ssh" ? (input.sshPort ?? existing.ssh_port ?? undefined) : undefined,
       workspace: input.workspace ?? existing.workspace,
       command: input.command ?? existing.command,
+      vscodePath: input.vscodePath ?? existing.vscode_path ?? undefined,
       environment:
         input.environment ?? (JSON.parse(existing.environment_json) as Record<string, string>),
       observationPrompt: input.observationPrompt ?? existing.observation_prompt ?? undefined,
@@ -176,6 +183,7 @@ export class AppServerService {
             ssh_port = ?,
             workspace = ?,
             command = ?,
+            vscode_path = ?,
             environment_json = ?,
             observation_prompt = ?,
             active_observation_skills_json = ?,
@@ -191,6 +199,7 @@ export class AppServerService {
         config.sshPort,
         config.workspace,
         config.command,
+        config.vscodePath,
         JSON.stringify(config.environment),
         config.observationPrompt,
         JSON.stringify(config.activeObservationSkillNames),
@@ -428,6 +437,7 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
   const hostKind = input.hostKind;
   const workspace = normalizeWorkspace(input.workspace);
   const command = input.command?.trim() || DEFAULT_COMMAND;
+  const vscodePath = normalizeNullableText(input.vscodePath) ?? DEFAULT_VSCODE_PATH;
   const environment = normalizeEnvironment(input.environment ?? {});
   const name = input.name?.trim() ?? workspaceBaseName(workspace);
 
@@ -451,6 +461,7 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
       sshPort: null,
       workspace,
       command,
+      vscodePath,
       environment,
       observationPrompt: normalizeNullableText(input.observationPrompt),
       activeObservationSkillNames: normalizeObservationSkillNames(input.activeObservationSkillNames)
@@ -476,6 +487,7 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
     sshPort: input.sshPort ?? null,
     workspace,
     command,
+    vscodePath,
     environment,
     observationPrompt: normalizeNullableText(input.observationPrompt),
     activeObservationSkillNames: normalizeObservationSkillNames(input.activeObservationSkillNames)
@@ -578,6 +590,7 @@ function toDto(row: AppServerRow): AppServerDto {
     sshPort: row.ssh_port,
     workspace: row.workspace,
     command: row.command,
+    vscodePath: row.vscode_path,
     environment: parseEnvironmentJson(row.environment_json),
     observationPrompt: row.observation_prompt,
     activeObservationSkillNames,

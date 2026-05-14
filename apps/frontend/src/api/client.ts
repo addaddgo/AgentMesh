@@ -82,6 +82,7 @@ export type CreateAppServerPayload = {
   readonly sshPort?: number;
   readonly workspace: string;
   readonly command?: string;
+  readonly vscodePath?: string;
   readonly environment?: Record<string, string>;
   readonly observationPrompt?: string;
   readonly activeObservationSkillNames?: readonly string[];
@@ -573,7 +574,17 @@ async function parseJson(response: Response): Promise<unknown> {
 
 function getErrorMessage(data: unknown, fallback: string): string {
   const error = data as Partial<ApiErrorResponse> | undefined;
-  return error?.error?.message ?? fallback;
+  const message = error?.error?.message ?? fallback;
+  const details = error?.error?.details
+    ?.map((detail) => detail.message.trim())
+    .filter((detail) => detail.length > 0);
+
+  if (details === undefined || details.length === 0) {
+    return message;
+  }
+
+  const uniqueDetails = [...new Set(details)];
+  return `${message}\n${uniqueDetails.join("\n")}`;
 }
 
 export const apiClient = new ApiClient();

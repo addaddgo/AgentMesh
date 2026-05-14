@@ -78,6 +78,7 @@ const createAppServerSchema = z
     sshPort: z.number().int().min(1).max(65_535).optional(),
     workspace: z.string().trim().min(1),
     command: optionalTextSchema,
+    vscodePath: z.string().trim().min(1).max(4_096).optional(),
     environment: environmentSchema,
     observationPrompt: z.string().trim().max(8_000).optional(),
     activeObservationSkillNames: z.array(z.string().trim().min(1)).max(64).optional()

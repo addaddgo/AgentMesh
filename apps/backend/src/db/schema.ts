@@ -23,6 +23,7 @@ export const appServers = sqliteTable(
     sshPort: integer("ssh_port"),
     workspace: text("workspace").notNull(),
     command: text("command").notNull(),
+    vscodePath: text("vscode_path"),
     environmentJson: text("environment_json").notNull().default("{}"),
     observationPrompt: text("observation_prompt"),
     activeObservationSkillsJson: text("active_observation_skills_json").notNull().default("[]"),

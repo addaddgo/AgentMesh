@@ -3,10 +3,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
-import type { ImageAttachmentDto } from "@agentmesh/shared";
+import type { PendingImageUploadDto } from "@agentmesh/shared";
 
 import type { BackendConfig } from "../config.js";
-import type { DatabaseHandle } from "../db/index.js";
 import { FilesystemError, RequestValidationError, SshError } from "../errors.js";
 import {
   assertPathInside,
@@ -24,17 +23,6 @@ const IMAGE_MIME_EXTENSIONS = new Map([
   ["image/gif", "gif"]
 ]);
 
-type AttachmentRow = {
-  readonly id: string;
-  readonly kind: "image";
-  readonly mime_type: string;
-  readonly filename: string;
-  readonly size: number;
-  readonly local_path: string;
-  readonly workspace_path: string | null;
-  readonly created_at: number;
-};
-
 export type WorkspaceCopyTarget = {
   readonly hostKind: "local" | "ssh";
   readonly host: string;
@@ -44,23 +32,19 @@ export type WorkspaceCopyTarget = {
 };
 
 export class ImageUploadService {
-  public constructor(
-    private readonly database: DatabaseHandle,
-    private readonly config: BackendConfig
-  ) {}
+  public constructor(private readonly config: BackendConfig) {}
 
   public storeUpload(input: {
     readonly buffer: Buffer;
     readonly mimeType: string;
-  }): ImageAttachmentDto {
+  }): PendingImageUploadDto {
     const ext = extensionForMime(input.mimeType);
 
     if (input.buffer.length > MAX_IMAGE_BYTES) {
       throw new RequestValidationError("Image exceeds maximum size");
     }
 
-    const id = randomUUID();
-    const filename = `${id}.${ext}`;
+    const filename = `${randomUUID()}.${ext}`;
     const uploadDir = path.join(this.config.uploadDir, "images");
     const localPath = path.join(uploadDir, filename);
     const now = Date.now();
@@ -83,46 +67,20 @@ export class ImageUploadService {
       throw new FilesystemError(errorMessage(error));
     }
 
-    this.database.sqlite
-      .prepare(
-        `
-          INSERT INTO attachments (
-            id,
-            kind,
-            mime_type,
-            filename,
-            size,
-            local_path,
-            workspace_path,
-            created_at
-          ) VALUES (?, 'image', ?, ?, ?, ?, NULL, ?)
-        `
-      )
-      .run(id, input.mimeType, filename, input.buffer.length, localPath, now);
-
-    return this.get(id);
-  }
-
-  public get(id: string): ImageAttachmentDto {
-    const row = this.database.sqlite.prepare("SELECT * FROM attachments WHERE id = ?").get(id) as
-      | AttachmentRow
-      | undefined;
-
-    if (row === undefined) {
-      throw new RequestValidationError(`Unknown attachment: ${id}`);
-    }
-
-    return toDto(row);
-  }
-
-  public getMany(ids: readonly string[]): readonly ImageAttachmentDto[] {
-    return ids.map((id) => this.get(id));
+    return {
+      kind: "image",
+      mimeType: input.mimeType,
+      filename,
+      size: input.buffer.length,
+      localPath,
+      createdAt: now
+    };
   }
 
   public copyToWorkspace(
-    attachment: ImageAttachmentDto,
+    attachment: PendingImageUploadDto,
     target: WorkspaceCopyTarget
-  ): ImageAttachmentDto {
+  ): { readonly workspacePath: string } {
     assertSafePathSegment(attachment.filename, "filename", "Uploaded filename is invalid");
     assertPathInside(
       this.config.dataDir,
@@ -137,11 +95,7 @@ export class ImageUploadService {
 
     if (target.hostKind === "ssh") {
       copyImageToRemote(attachment.localPath, workspacePath, target);
-      this.database.sqlite
-        .prepare("UPDATE attachments SET workspace_path = ? WHERE id = ?")
-        .run(workspacePath, attachment.id);
-
-      return { ...attachment, workspacePath };
+      return { workspacePath };
     }
 
     try {
@@ -151,11 +105,7 @@ export class ImageUploadService {
       throw new FilesystemError(errorMessage(error));
     }
 
-    this.database.sqlite
-      .prepare("UPDATE attachments SET workspace_path = ? WHERE id = ?")
-      .run(workspacePath, attachment.id);
-
-    return { ...attachment, workspacePath };
+    return { workspacePath };
   }
 }
 
@@ -241,19 +191,6 @@ function extensionForMime(mimeType: string): string {
   }
 
   return ext;
-}
-
-function toDto(row: AttachmentRow): ImageAttachmentDto {
-  return {
-    id: row.id,
-    kind: row.kind,
-    mimeType: row.mime_type,
-    filename: row.filename,
-    size: row.size,
-    localPath: row.local_path,
-    workspacePath: row.workspace_path,
-    createdAt: row.created_at
-  };
 }
 
 function errorMessage(error: unknown): string {

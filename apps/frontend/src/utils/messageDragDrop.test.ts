@@ -14,7 +14,7 @@ describe("message drag/drop text copy", () => {
     const message = makeMessage({
       parts: [
         { type: "markdown", text: "first **markdown**" },
-        { type: "image", attachmentId: "img_1", workspacePath: "/workspace/image.png" },
+        { type: "image", workspacePath: "/workspace/image.png" },
         { type: "diff", text: "diff --git a/secret b/secret" },
         {
           type: "tool_call",

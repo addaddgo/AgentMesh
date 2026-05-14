@@ -99,11 +99,20 @@ describe("backend integration with fake Codex app-server", () => {
 
     const uploaded = await uploadPng(app);
     expect(uploaded.statusCode).toBe(201);
-    const attachment = uploaded.json<{ attachment: { id: string; filename: string } }>().attachment;
+    const attachment = uploaded.json<{
+      attachment: {
+        kind: "image";
+        filename: string;
+        localPath: string;
+        mimeType: string;
+        size: number;
+        createdAt: number;
+      };
+    }>().attachment;
     const imageSend = await app.inject({
       method: "POST",
       url: "/api/messages/send",
-      payload: { threadId, text: "Describe this", attachmentIds: [attachment.id] }
+      payload: { threadId, text: "Describe this", attachments: [attachment] }
     });
     expect(imageSend.statusCode).toBe(202);
     await waitForMessageStatus(

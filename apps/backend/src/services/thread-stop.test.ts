@@ -284,13 +284,13 @@ function insertQueueItem(
       appServerId,
       threadId,
       status,
-      JSON.stringify({
-        messageId,
-        turnId,
-        codexThreadId: "codex-thread",
-        text: "hello",
-        attachmentIds: []
-      }),
+        JSON.stringify({
+          messageId,
+          turnId,
+          codexThreadId: "codex-thread",
+          text: "hello",
+          attachments: []
+        }),
       now,
       now
     );

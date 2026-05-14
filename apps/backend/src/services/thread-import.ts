@@ -435,14 +435,12 @@ function normalizePart(value: JsonValue): MessagePart[] {
   const text = firstString(value.markdown, value.text, value.content);
 
   if (type === "image" || firstString(value.url, value.imageUrl, value.image_url) !== undefined) {
-    const attachmentId = firstString(value.attachmentId, value.attachment_id);
     const workspacePath = firstString(value.workspacePath, value.workspace_path, value.localImage);
     const url = firstString(value.url, value.imageUrl, value.image_url, value.image);
 
     return [
       {
         type: "image",
-        ...(attachmentId === undefined ? {} : { attachmentId }),
         ...(workspacePath === undefined ? {} : { workspacePath }),
         ...(url === undefined ? {} : { url })
       }

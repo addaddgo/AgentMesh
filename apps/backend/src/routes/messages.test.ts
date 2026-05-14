@@ -366,7 +366,14 @@ describe("message send API", () => {
       payload: {
         threadId,
         text: "Too many images",
-        attachmentIds: ["1", "2", "3", "4", "5", "6"]
+        attachments: Array.from({ length: 6 }, (_, index) => ({
+          kind: "image",
+          mimeType: "image/png",
+          filename: `img-${index}.png`,
+          size: 1,
+          localPath: `/tmp/img-${index}.png`,
+          createdAt: 1
+        }))
       }
     });
 
@@ -420,9 +427,9 @@ describe("message send API", () => {
 
     const { threadId } = await createStartedAppServer(app, workspace, scriptPath);
     const uploaded = await uploadPng(app);
-    const attachmentId = uploaded.json<{ attachment: { id: string; filename: string } }>()
-      .attachment.id;
-    const filename = uploaded.json<{ attachment: { filename: string } }>().attachment.filename;
+    const attachment = uploaded.json<{
+      attachment: { filename: string; localPath: string; mimeType: string; size: number; createdAt: number };
+    }>().attachment;
 
     const sent = await app.inject({
       method: "POST",
@@ -430,7 +437,7 @@ describe("message send API", () => {
       payload: {
         threadId,
         text: "Describe this",
-        attachmentIds: [attachmentId]
+        attachments: [{ ...attachment, kind: "image" }]
       }
     });
 
@@ -442,7 +449,7 @@ describe("message send API", () => {
       return row?.status === "completed";
     });
 
-    const copiedPath = path.join(workspace, ".agentmesh", "images", filename);
+    const copiedPath = path.join(workspace, ".agentmesh", "images", attachment.filename);
     const requests = readJsonLines(path.join(workspace, "requests.ndjson"));
     const turnStart = requests.find(
       (request): request is { method: string; params: { input: unknown } } =>
@@ -450,16 +457,8 @@ describe("message send API", () => {
         request !== null &&
         (request as { method?: unknown }).method === "turn/start"
     );
-    const attachment = app.database.sqlite
-      .prepare("SELECT workspace_path FROM attachments WHERE id = ?")
-      .get(attachmentId) as { workspace_path: string };
-    const linkCount = app.database.sqlite
-      .prepare("SELECT COUNT(*) AS count FROM message_attachments WHERE attachment_id = ?")
-      .get(attachmentId) as { count: number };
 
     expect(fs.existsSync(copiedPath)).toBe(true);
-    expect(attachment.workspace_path).toBe(copiedPath);
-    expect(linkCount.count).toBe(1);
     expect(turnStart?.params.input).toEqual([
       { type: "text", text: "Describe this" },
       { type: "localImage", path: copiedPath }
@@ -477,14 +476,16 @@ describe("message send API", () => {
     fs.writeFileSync(path.join(workspace, ".agentmesh", "images"), "not a directory");
 
     const uploaded = await uploadPng(app);
-    const attachmentId = uploaded.json<{ attachment: { id: string } }>().attachment.id;
+    const attachment = uploaded.json<{
+      attachment: { filename: string; localPath: string; mimeType: string; size: number; createdAt: number };
+    }>().attachment;
     const sent = await app.inject({
       method: "POST",
       url: "/api/messages/send",
       payload: {
         threadId,
         text: "This copy will fail",
-        attachmentIds: [attachmentId]
+        attachments: [{ ...attachment, kind: "image" }]
       }
     });
 

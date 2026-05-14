@@ -380,7 +380,15 @@ export const MIGRATIONS: readonly Migration[] = [
         ON scheduled_messages (app_server_id, created_at);
     `
   },
-
+  {
+    id: "0009_drop_attachment_tables",
+    sql: `
+      DROP INDEX IF EXISTS message_attachments_attachment_idx;
+      DROP TABLE IF EXISTS message_attachments;
+      DROP INDEX IF EXISTS attachments_kind_idx;
+      DROP TABLE IF EXISTS attachments;
+    `
+  },
 ];
 
 export function runMigrations(sqlite: Database): void {

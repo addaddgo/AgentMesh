@@ -41,14 +41,15 @@ describe("database migrations", () => {
       "__agentmesh_migrations",
       "app_servers",
       "approvals",
-      "attachments",
       "codex_events",
-      "message_attachments",
       "messages",
       "queue_items",
+      "scheduled_messages",
       "thread_drafts",
       "thread_imports",
+      "thread_settings",
       "threads",
+      "todos",
       "turns",
       "ui_layouts"
     ]);
@@ -86,25 +87,6 @@ describe("database migrations", () => {
     expect(
       columnNames(app.database.sqlite.pragma("table_info(codex_events)") as TableInfoRow[])
     ).toContain("raw_json");
-  });
-
-  it("stores image metadata without blob columns", async () => {
-    const { app } = await setup();
-    const attachmentColumns = app.database.sqlite.pragma(
-      "table_info(attachments)"
-    ) as TableInfoRow[];
-
-    expect(columnNames(attachmentColumns)).toEqual([
-      "id",
-      "kind",
-      "mime_type",
-      "filename",
-      "size",
-      "local_path",
-      "workspace_path",
-      "created_at"
-    ]);
-    expect(attachmentColumns.map((column) => column.type.toUpperCase())).not.toContain("BLOB");
   });
 
   it("enforces unique app-server names", async () => {

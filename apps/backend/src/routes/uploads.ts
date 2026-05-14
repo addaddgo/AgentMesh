@@ -11,7 +11,7 @@ import {
 } from "../services/image-uploads.js";
 
 export async function registerUploadRoutes(app: FastifyInstance): Promise<void> {
-  const service = new ImageUploadService(app.database, app.config);
+  const service = new ImageUploadService(app.config);
 
   app.post("/api/uploads/images", async (request, reply): Promise<UploadImageResponse> => {
     if (!request.isMultipart()) {

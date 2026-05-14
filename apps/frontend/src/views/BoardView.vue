@@ -545,7 +545,7 @@ async function sendDraftForLeaf(
   leaf: SplitPaneTree,
   payload: {
     readonly draftMarkdown: string;
-    readonly attachmentIds: readonly string[];
+    readonly attachments: readonly import("@agentmesh/shared").PendingImageUploadDto[];
     readonly onSuccess: () => void;
   }
 ): Promise<void> {
@@ -557,14 +557,14 @@ async function sendDraftForLeaf(
   const draft = payload.draftMarkdown.trim();
   const appServer = serverById(thread.appServerId);
   if (
-    (draft.length === 0 && payload.attachmentIds.length === 0) ||
+    (draft.length === 0 && payload.attachments.length === 0) ||
     thread.isGone ||
     appServer?.status !== "online"
   ) {
     return;
   }
 
-  const response = await messages.send(thread.id, draft, payload.attachmentIds);
+  const response = await messages.send(thread.id, draft, payload.attachments);
   if (response === null) {
     return;
   }

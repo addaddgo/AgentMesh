@@ -127,12 +127,12 @@
               <img
                 v-if="part.url !== undefined"
                 :src="part.url"
-                :alt="part.attachmentId ?? 'Codex image attachment'"
+                alt="Codex image attachment"
                 loading="lazy"
                 decoding="async"
               />
               <figcaption>
-                {{ part.workspacePath ?? part.attachmentId ?? "Image attachment" }}
+                {{ part.workspacePath ?? "Image attachment" }}
               </figcaption>
             </figure>
             <el-alert
@@ -270,7 +270,11 @@
         <div v-if="isDropTarget" class="composer-drop-feedback">Drop to append text to draft</div>
 
         <div v-if="attachments.length > 0" class="attachment-list">
-          <article v-for="item in attachments" :key="item.attachment.id" class="attachment-chip">
+          <article
+            v-for="item in attachments"
+            :key="item.attachment.localPath"
+            class="attachment-chip"
+          >
             <img :src="item.previewUrl" :alt="item.attachment.filename" />
             <el-button
               size="small"
@@ -281,7 +285,7 @@
               circle
               title="Remove image"
               aria-label="Remove image"
-              @click="removeAttachment(item.attachment.id)"
+              @click="removeAttachment(item.attachment.localPath)"
             />
           </article>
         </div>
@@ -415,7 +419,7 @@ import type {
   CodexCommandDto,
   CodexCommandOptionDto,
   CodexEventDto,
-  ImageAttachmentDto,
+  PendingImageUploadDto,
   QueueItemDto,
   SkillDto,
   ThreadDto,
@@ -478,7 +482,7 @@ markdownRenderer.renderer.rules.link_open = (tokens, idx, options, env, self) =>
 };
 
 type SelectedAttachment = {
-  readonly attachment: ImageAttachmentDto;
+  readonly attachment: PendingImageUploadDto;
   readonly previewUrl: string;
 };
 
@@ -501,7 +505,7 @@ const emit = defineEmits<{
   send: [
     payload: {
       readonly draftMarkdown: string;
-      readonly attachmentIds: readonly string[];
+      readonly attachments: readonly PendingImageUploadDto[];
       readonly onSuccess: () => void;
     }
   ];
@@ -1360,11 +1364,13 @@ async function uploadImageFiles(files: readonly File[]): Promise<void> {
 }
 
 function removeAttachment(id: string): void {
-  const item = attachments.value.find((candidate) => candidate.attachment.id === id);
+  const item = attachments.value.find((candidate) => candidate.attachment.localPath === id);
   if (item !== undefined) {
     URL.revokeObjectURL(item.previewUrl);
   }
-  attachments.value = attachments.value.filter((candidate) => candidate.attachment.id !== id);
+  attachments.value = attachments.value.filter(
+    (candidate) => candidate.attachment.localPath !== id
+  );
 }
 
 function sendComposer(): void {
@@ -1374,7 +1380,7 @@ function sendComposer(): void {
 
   emit("send", {
     draftMarkdown: currentEditorText(),
-    attachmentIds: attachments.value.map((item) => item.attachment.id),
+    attachments: attachments.value.map((item) => item.attachment),
     onSuccess: () => {
       replaceEditorDraft("");
       historyBrowseIndex.value = -1;

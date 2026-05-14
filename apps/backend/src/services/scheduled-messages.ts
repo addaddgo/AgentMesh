@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  PendingImageUploadDto,
   ScheduledMessageCreateRequest,
   ScheduledMessageDto,
   ScheduledMessageStatus,
@@ -43,7 +44,7 @@ type AppServerLookupRow = {
 type SendTextFn = (
   threadId: string,
   text: string,
-  attachmentIds?: readonly string[]
+  attachments?: readonly PendingImageUploadDto[]
 ) => SendMessageResponse;
 
 const BACKEND_RESTART_ERROR = "Backend restarted before scheduled send completed";

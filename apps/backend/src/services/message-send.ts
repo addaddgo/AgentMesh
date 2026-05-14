@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import type {
   ChatMessage,
-  ImageAttachmentDto,
   MessagePart,
+  PendingImageUploadDto,
   QueueItemDto,
   SendMessageResponse,
   TurnDto,
@@ -82,7 +82,7 @@ type SendPayload = {
   readonly turnId: string;
   readonly codexThreadId: string;
   readonly text: string;
-  readonly attachmentIds: readonly string[];
+  readonly attachments: readonly PendingImageUploadDto[];
 };
 
 type TurnCompletion = {
@@ -105,7 +105,7 @@ export class MessageSendService {
   ) {
     this.messages = new MessageStorageService(database);
     this.codexEvents = new CodexEventService(database);
-    this.uploads = new ImageUploadService(database, config);
+    this.uploads = new ImageUploadService(config);
     this.queue = new ThreadQueueService(database, events, {
       handlers: {
         send_message: (item) => this.executeSend(item)
@@ -116,25 +116,23 @@ export class MessageSendService {
   public sendText(
     threadId: string,
     text: string,
-    attachmentIds: readonly string[] = []
+    attachments: readonly PendingImageUploadDto[] = []
   ): SendMessageResponse {
     const normalizedText = text.trim();
-    const uniqueAttachmentIds = [...new Set(attachmentIds)];
 
-    if (attachmentIds.length > MAX_IMAGES_PER_MESSAGE) {
+    if (attachments.length > MAX_IMAGES_PER_MESSAGE) {
       throw new RequestValidationError("A message can include at most 5 images");
     }
 
-    if (uniqueAttachmentIds.length !== attachmentIds.length) {
+    if (hasDuplicateUploadPaths(attachments)) {
       throw new RequestValidationError("Duplicate image attachments are not allowed");
     }
 
-    if (normalizedText.length === 0 && attachmentIds.length === 0) {
+    if (normalizedText.length === 0 && attachments.length === 0) {
       throw new RequestValidationError("Message text or image attachment is required");
     }
 
     const thread = this.getSendableThread(threadId);
-    const attachments = this.uploads.getMany(attachmentIds);
     const finalText = this.buildVisibleMessageText(thread.id, normalizedText);
 
     if (thread.app_server_status !== "online") {
@@ -162,7 +160,7 @@ export class MessageSendService {
         turnId: created.turn.id,
         codexThreadId: thread.codex_thread_id,
         text: finalText,
-        attachmentIds: attachments.map((attachment) => attachment.id)
+        attachments
       } satisfies SendPayload
     });
 
@@ -305,7 +303,7 @@ export class MessageSendService {
   private createUserTurnAndMessage(
     thread: ThreadRow,
     text: string,
-    attachments: readonly ImageAttachmentDto[],
+    attachments: readonly PendingImageUploadDto[],
     messageStatus: ChatMessage["status"],
     turnStatus: TurnStatus
   ): { readonly message: ChatMessage; readonly turn: TurnDto } {
@@ -321,7 +319,6 @@ export class MessageSendService {
     parts.push(
       ...attachments.map((attachment) => ({
         type: "image" as const,
-        attachmentId: attachment.id,
         workspacePath: pathForAttachment(thread.workspace, attachment.filename)
       }))
     );
@@ -379,14 +376,6 @@ export class MessageSendService {
       this.database.sqlite
         .prepare("UPDATE messages SET turn_id = ?, updated_at = ? WHERE id = ?")
         .run(turnId, now, messageId);
-
-      const insertMessageAttachment = this.database.sqlite.prepare(
-        "INSERT INTO message_attachments (message_id, attachment_id) VALUES (?, ?)"
-      );
-
-      for (const attachment of attachments) {
-        insertMessageAttachment.run(messageId, attachment.id);
-      }
     });
 
     transaction();
@@ -591,7 +580,7 @@ export class MessageSendService {
       input.push({ type: "text", text: payload.text });
     }
 
-    for (const attachment of this.uploads.getMany(payload.attachmentIds)) {
+    for (const attachment of payload.attachments) {
       const copied = this.uploads.copyToWorkspace(attachment, target);
       input.push({ type: "localImage", path: copied.workspacePath });
     }
@@ -788,13 +777,29 @@ function parseSendPayload(payload: unknown): SendPayload {
     typeof (payload as SendPayload).turnId === "string" &&
     typeof (payload as SendPayload).codexThreadId === "string" &&
     typeof (payload as SendPayload).text === "string" &&
-    Array.isArray((payload as SendPayload).attachmentIds) &&
-    (payload as SendPayload).attachmentIds.every((id) => typeof id === "string")
+    Array.isArray((payload as SendPayload).attachments) &&
+    (payload as SendPayload).attachments.every(isPendingImageUpload)
   ) {
     return payload as SendPayload;
   }
 
   throw new RequestValidationError("Invalid send queue payload");
+}
+
+function hasDuplicateUploadPaths(attachments: readonly PendingImageUploadDto[]): boolean {
+  return new Set(attachments.map((attachment) => attachment.localPath)).size !== attachments.length;
+}
+
+function isPendingImageUpload(value: unknown): value is PendingImageUploadDto {
+  return (
+    isRecord(value) &&
+    value.kind === "image" &&
+    typeof value.mimeType === "string" &&
+    typeof value.filename === "string" &&
+    typeof value.size === "number" &&
+    typeof value.localPath === "string" &&
+    typeof value.createdAt === "number"
+  );
 }
 
 function stringifyError(value: unknown): string {

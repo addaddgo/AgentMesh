@@ -1,4 +1,10 @@
-import type { ChatMessage, QueueItemDto, SendMessageResponse, TurnDto } from "@agentmesh/shared";
+import type {
+  ChatMessage,
+  PendingImageUploadDto,
+  QueueItemDto,
+  SendMessageResponse,
+  TurnDto
+} from "@agentmesh/shared";
 import { defineStore } from "pinia";
 
 import { apiClient } from "../api/client";
@@ -61,10 +67,10 @@ export const useMessageStore = defineStore("messages", {
     async send(
       threadId: string,
       text: string,
-      attachmentIds: readonly string[] = []
+      attachments: readonly PendingImageUploadDto[] = []
     ): Promise<SendMessageResponse | null> {
       try {
-        const response = await apiClient.sendMessage({ threadId, text, attachmentIds });
+        const response = await apiClient.sendMessage({ threadId, text, attachments });
         this.upsertMessage(response.message);
         this.turnsById[response.turn.id] = response.turn;
         this.upsertQueueItem(response.queueItem);

@@ -179,37 +179,6 @@ export const messages = sqliteTable(
   ]
 );
 
-export const attachments = sqliteTable(
-  "attachments",
-  {
-    id: text("id").primaryKey(),
-    kind: text("kind", { enum: ["image"] }).notNull(),
-    mimeType: text("mime_type").notNull(),
-    filename: text("filename").notNull(),
-    size: integer("size").notNull(),
-    localPath: text("local_path").notNull(),
-    workspacePath: text("workspace_path"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull()
-  },
-  (table) => [index("attachments_kind_idx").on(table.kind)]
-);
-
-export const messageAttachments = sqliteTable(
-  "message_attachments",
-  {
-    messageId: text("message_id")
-      .notNull()
-      .references(() => messages.id, { onDelete: "cascade" }),
-    attachmentId: text("attachment_id")
-      .notNull()
-      .references(() => attachments.id, { onDelete: "cascade" })
-  },
-  (table) => [
-    primaryKey({ columns: [table.messageId, table.attachmentId] }),
-    index("message_attachments_attachment_idx").on(table.attachmentId)
-  ]
-);
-
 export const approvals = sqliteTable(
   "approvals",
   {

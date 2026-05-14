@@ -95,13 +95,11 @@ function normalizeDirectPart(value: Record<string, unknown>): MessagePart | unde
   }
 
   if (lowerType === "image" || hasAnyString(value, "url", "imageUrl", "image_url", "image")) {
-    const attachmentId = firstString(value.attachmentId, value.attachment_id);
     const workspacePath = firstString(value.workspacePath, value.workspace_path, value.localImage);
     const url = firstString(value.url, value.imageUrl, value.image_url, value.image);
 
     return {
       type: "image",
-      ...(attachmentId === undefined ? {} : { attachmentId }),
       ...(workspacePath === undefined ? {} : { workspacePath }),
       ...(url === undefined ? {} : { url })
     };

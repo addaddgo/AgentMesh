@@ -431,7 +431,7 @@ function toPayload(): CreateAppServerPayload {
     workspace: form.workspace,
     ...(form.name.trim().length > 0 ? { name: form.name } : {}),
     ...(form.command.trim().length > 0 ? { command: form.command } : {}),
-    ...(form.vscodePath.trim().length > 0 ? { vscodePath: form.vscodePath } : {}),
+    vscodePath: form.vscodePath.trim().length > 0 ? form.vscodePath : null,
     environment: parseEnvironmentText(form.environmentText),
     ...(form.observationPrompt.trim().length > 0
       ? { observationPrompt: form.observationPrompt }

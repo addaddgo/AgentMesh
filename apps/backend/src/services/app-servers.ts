@@ -25,7 +25,7 @@ export type CreateAppServerInput = {
   readonly sshPort?: number | undefined;
   readonly workspace: string;
   readonly command?: string | undefined;
-  readonly vscodePath?: string | undefined;
+  readonly vscodePath?: string | null | undefined;
   readonly environment?: Record<string, string> | undefined;
   readonly observationPrompt?: string | undefined;
   readonly activeObservationSkillNames?: readonly string[] | undefined;
@@ -157,7 +157,7 @@ export class AppServerService {
         nextHostKind === "ssh" ? (input.sshPort ?? existing.ssh_port ?? undefined) : undefined,
       workspace: input.workspace ?? existing.workspace,
       command: input.command ?? existing.command,
-      vscodePath: input.vscodePath ?? existing.vscode_path ?? undefined,
+      vscodePath: Object.hasOwn(input, "vscodePath") ? input.vscodePath : existing.vscode_path,
       environment:
         input.environment ?? (JSON.parse(existing.environment_json) as Record<string, string>),
       observationPrompt: input.observationPrompt ?? existing.observation_prompt ?? undefined,
@@ -437,7 +437,7 @@ function normalizeConfig(input: CreateAppServerInput): NormalizedAppServerConfig
   const hostKind = input.hostKind;
   const workspace = normalizeWorkspace(input.workspace);
   const command = input.command?.trim() || DEFAULT_COMMAND;
-  const vscodePath = normalizeNullableText(input.vscodePath) ?? DEFAULT_VSCODE_PATH;
+  const vscodePath = normalizeNullableText(input.vscodePath);
   const environment = normalizeEnvironment(input.environment ?? {});
   const name = input.name?.trim() ?? workspaceBaseName(workspace);
 
@@ -535,7 +535,7 @@ function workspaceBaseName(workspace: string): string {
   return sanitized.length === 0 ? "app-server" : sanitized;
 }
 
-function normalizeNullableText(value: string | undefined): string | null {
+function normalizeNullableText(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? null : trimmed;
 }

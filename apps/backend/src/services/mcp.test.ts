@@ -20,7 +20,7 @@ describe("MCP tools", () => {
     return backend;
   }
 
-  it("lists app-servers and current threads using MCP field names", async () => {
+  it("lists resumed threads for online workspaces using MCP field names", async () => {
     const { app, tempDir, config } = await setup();
     const workspace = path.join(tempDir, "workspace");
     fs.mkdirSync(workspace);
@@ -41,17 +41,10 @@ describe("MCP tools", () => {
       .prepare("SELECT name FROM app_servers WHERE id = ?")
       .get(appServerId) as { name: string };
 
-    expect(service.listAppServers()).toEqual([
-      {
-        app_server_name: appServer.name,
-        host: "localhost",
-        workspace,
-        status: "online"
-      }
-    ]);
-    expect(service.listThreads(appServer.name)).toMatchObject({
+    expect(service.listWorkspaceThreads()).toMatchObject({
       threads: [
         {
+          app_workspace_name: appServer.name,
           thread_name: "Main",
           thread_id: "codex-thread-1",
           status: "idle"
@@ -82,7 +75,7 @@ describe("MCP tools", () => {
       .get(appServerId) as { name: string };
 
     const result = service.sendMessage({
-      appServerName: appServer.name,
+      appWorkspaceName: appServer.name,
       threadName: "Main",
       text: "Hello from MCP"
     });
@@ -136,7 +129,7 @@ describe("MCP tools", () => {
     );
 
     expect(
-      service.sendMessage({ appServerName: "missing", threadName: "Main", text: "hello" })
+      service.sendMessage({ appWorkspaceName: "missing", threadName: "Main", text: "hello" })
     ).toEqual({ status: "error", error: "app_server_not_found" });
 
     const { appServerId } = await createStartedAppServer(
@@ -149,7 +142,11 @@ describe("MCP tools", () => {
       .get(appServerId) as { name: string };
 
     expect(
-      service.sendMessage({ appServerName: appServer.name, threadName: "Missing", text: "hello" })
+      service.sendMessage({
+        appWorkspaceName: appServer.name,
+        threadName: "Missing",
+        text: "hello"
+      })
     ).toEqual({ status: "error", error: "thread_not_found" });
 
     insertCurrentThread(app, appServerId, {
@@ -158,7 +155,7 @@ describe("MCP tools", () => {
     });
 
     expect(
-      service.sendMessage({ appServerName: appServer.name, threadName: "Main", text: "hello" })
+      service.sendMessage({ appWorkspaceName: appServer.name, threadName: "Main", text: "hello" })
     ).toEqual({ status: "error", error: "ambiguous_thread_name" });
 
     app.database.sqlite
@@ -167,22 +164,16 @@ describe("MCP tools", () => {
     await app.inject({ method: "POST", url: `/api/app-servers/${appServerId}/stop` });
 
     expect(
-      service.sendMessage({ appServerName: appServer.name, threadName: "Main", text: "hello" })
+      service.sendMessage({ appWorkspaceName: appServer.name, threadName: "Main", text: "hello" })
     ).toEqual({ status: "error", error: "app_server_offline" });
   });
 
   it("exposes the MCP tools over the backend /mcp endpoint", async () => {
-    const { app } = await setup();
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    fs.mkdirSync(workspace);
 
-    await app.inject({
-      method: "POST",
-      url: "/api/app-servers",
-      payload: {
-        name: "agentmesh_test",
-        hostKind: "local",
-        workspace: "/tmp/agentmesh-test"
-      }
-    });
+    await createStartedAppServer(app, workspace, createFakeCodexScript(tempDir), "agentmesh_test");
 
     const headers = {
       "content-type": "application/json",
@@ -224,7 +215,7 @@ describe("MCP tools", () => {
         id: 2,
         method: "tools/call",
         params: {
-          name: "list_app_servers",
+          name: "list_workspace_threads",
           arguments: {}
         }
       }
@@ -236,12 +227,12 @@ describe("MCP tools", () => {
     expect(called.json()).toMatchObject({
       result: {
         structuredContent: {
-          app_servers: [
+          threads: [
             {
-              app_server_name: "agentmesh_test",
-              host: "localhost",
-              workspace: "/tmp/agentmesh-test",
-              status: "offline"
+              app_workspace_name: "agentmesh_test",
+              thread_name: "Main",
+              thread_id: "codex-thread-1",
+              status: "idle"
             }
           ]
         }
@@ -253,12 +244,14 @@ describe("MCP tools", () => {
 async function createStartedAppServer(
   app: TestBackend["app"],
   workspace: string,
-  scriptPath: string
+  scriptPath: string,
+  name?: string
 ): Promise<{ readonly appServerId: string; readonly threadId: string }> {
   const created = await app.inject({
     method: "POST",
     url: "/api/app-servers",
     payload: {
+      ...(name === undefined ? {} : { name }),
       hostKind: "local",
       workspace,
       command: `${process.execPath} ${scriptPath}`

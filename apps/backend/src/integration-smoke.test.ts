@@ -163,13 +163,20 @@ describe("backend integration with fake Codex app-server", () => {
 
     const mcp = new AgentMeshMcpService(app.database, config, app.events, app.appServerLifecycle, app.threadStatusCache);
     const appServerName = started.json<{ name: string }>().name;
-    expect(mcp.listAppServers()).toEqual([
-      expect.objectContaining({ app_server_name: appServerName, workspace, status: "online" })
-    ]);
-    expect(mcp.listThreads(appServerName)).toMatchObject({
-      threads: [expect.objectContaining({ thread_name: "Main", thread_id: "codex-thread-1" })]
+    expect(mcp.listWorkspaceThreads()).toMatchObject({
+      threads: [
+        expect.objectContaining({
+          app_workspace_name: appServerName,
+          thread_name: "Main",
+          thread_id: "codex-thread-1"
+        })
+      ]
     });
-    const mcpSend = mcp.sendMessage({ appServerName, threadName: "Main", text: "Hello from MCP" });
+    const mcpSend = mcp.sendMessage({
+      appWorkspaceName: appServerName,
+      threadName: "Main",
+      text: "Hello from MCP"
+    });
     expect(mcpSend).toMatchObject({ status: "queued" });
     if (mcpSend.status !== "queued") {
       throw new Error("Expected queued MCP send");

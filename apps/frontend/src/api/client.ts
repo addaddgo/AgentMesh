@@ -82,7 +82,7 @@ export type CreateAppServerPayload = {
   readonly sshPort?: number;
   readonly workspace: string;
   readonly command?: string;
-  readonly vscodePath?: string;
+  readonly vscodePath?: string | null;
   readonly environment?: Record<string, string>;
   readonly observationPrompt?: string;
   readonly activeObservationSkillNames?: readonly string[];

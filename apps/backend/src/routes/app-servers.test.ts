@@ -278,7 +278,8 @@ describe("app-server configuration API", () => {
       url: "/api/app-servers",
       payload: {
         hostKind: "local",
-        workspace
+        workspace,
+        vscodePath: "custom-code"
       }
     });
     const id = created.json<{ id: string }>().id;
@@ -288,7 +289,8 @@ describe("app-server configuration API", () => {
       url: `/api/app-servers/${id}`,
       payload: {
         name: "renamed",
-        workspace: renamedWorkspace
+        workspace: renamedWorkspace,
+        vscodePath: null
       }
     });
     const listed = await app.inject({
@@ -309,6 +311,7 @@ describe("app-server configuration API", () => {
       id,
       name: "renamed",
       workspace: renamedWorkspace,
+      vscodePath: null,
       status: "offline",
       lastError: null
     });

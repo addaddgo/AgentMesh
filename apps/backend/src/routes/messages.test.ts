@@ -219,6 +219,54 @@ describe("message send API", () => {
     expect(thread.status).toBe("idle");
   });
 
+  it("creates a delayed send through the unified message send route", async () => {
+    const { app } = await setup();
+    const now = Date.now();
+
+    app.database.sqlite
+      .prepare(
+        `
+          INSERT INTO app_servers (
+            id, name, host_kind, host, ssh_user, ssh_port, workspace, command,
+            environment_json, observation_prompt, active_observation_skills_json,
+            status, last_started_at, last_seen_at, last_error, created_at, updated_at
+          ) VALUES (?, ?, 'local', 'localhost', NULL, NULL, ?, 'codex app-server', '{}', NULL, '[]', 'offline', NULL, NULL, NULL, ?, ?)
+        `
+      )
+      .run("app-1", "Local", "/workspace/demo", now, now);
+    app.database.sqlite
+      .prepare(
+        `
+          INSERT INTO threads (
+            id, app_server_id, codex_thread_id, thread_name, agent_kind, parent_thread_id,
+            parent_codex_thread_id, agent_name, title, status, cwd, is_current, is_gone,
+            imported_at, last_seen_at, raw_metadata_json, created_at, updated_at
+          ) VALUES (?, 'app-1', 'codex-thread-1', 'Main Thread', 'main', NULL, NULL, 'main agent', NULL, 'idle', ?, 1, 0, NULL, NULL, '{}', ?, ?)
+        `
+      )
+      .run("thread-1", "/workspace/demo", now, now);
+
+    const sent = await app.inject({
+      method: "POST",
+      url: "/api/messages/send",
+      payload: {
+        threadId: "thread-1",
+        text: "Hello later",
+        delaySeconds: 120
+      }
+    });
+
+    expect(sent.statusCode).toBe(202);
+    expect(sent.json()).toMatchObject({
+      status: "scheduled",
+      item: {
+        threadId: "thread-1",
+        text: "Hello later",
+        status: "scheduled"
+      }
+    });
+  });
+
   it("fails offline sends visibly and leaves the composer draft untouched", async () => {
     const { app, tempDir } = await setup();
     const workspace = path.join(tempDir, "workspace");

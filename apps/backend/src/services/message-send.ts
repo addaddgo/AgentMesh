@@ -164,10 +164,22 @@ export class MessageSendService {
     });
 
     return {
+      status: "queued",
       message: this.getMessage(created.message.id),
       turn: this.getTurn(created.turn.id),
       queueItem
     };
+  }
+
+  public sendQueuedText(
+    threadId: string,
+    text: string,
+    attachments: readonly PendingImageUploadDto[] = []
+  ): Extract<SendMessageResponse, { readonly status: "queued" }> {
+    return this.sendText(threadId, text, attachments) as Extract<
+      SendMessageResponse,
+      { readonly status: "queued" }
+    >;
   }
 
   private async executeSend(item: QueueItemDto): Promise<{ readonly result: unknown }> {

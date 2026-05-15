@@ -20,7 +20,7 @@ describe("MCP tools", () => {
     return backend;
   }
 
-  it("filters out the current workspace from workspace thread listings", async () => {
+  it("lists the current workspace too when it has resumed threads", async () => {
     const { app, config } = await setup();
     const service = new AgentMeshMcpService(
       app.database,
@@ -74,8 +74,11 @@ describe("MCP tools", () => {
     app.threadStatusCache.set(selfThread.id, "idle");
     app.threadStatusCache.set(peerThread.id, "idle");
 
-    expect(service.listWorkspaceThreads("SelfWorkspace")).toEqual({
-      threads: [{ app_workspace_name: "PeerWorkspace", thread_name: "Main" }]
+    expect(service.listWorkspaceThreads()).toEqual({
+      threads: [
+        { app_workspace_name: "PeerWorkspace", thread_name: "Main" },
+        { app_workspace_name: "SelfWorkspace", thread_name: "Main" }
+      ]
     });
   });
 
@@ -181,6 +184,31 @@ describe("MCP tools", () => {
     expect(JSON.parse(message.parts_json)).toEqual([{ type: "markdown", text: "Hello from MCP" }]);
   });
 
+  it("schedules delayed sends through the unified send_message MCP tool", async () => {
+    const { app, config } = await setup();
+    const service = new AgentMeshMcpService(
+      app.database,
+      config,
+      app.events,
+      app.appServerLifecycle,
+      app.threadStatusCache
+    );
+    seedOnlineAppServerWithIdleThread(app, "SchedulerWorkspace", "Main");
+
+    const result = await service.sendMessage({
+      appWorkspaceName: "SchedulerWorkspace",
+      threadName: "Main",
+      text: "Send later",
+      delaySeconds: 90
+    });
+
+    expect(result).toMatchObject({
+      status: "scheduled",
+      scheduled_message_id: expect.any(String),
+      run_at: expect.any(Number)
+    });
+  });
+
   it("returns MCP routing errors without guessing", async () => {
     const { app, tempDir, config } = await setup();
     const workspace = path.join(tempDir, "workspace");
@@ -246,6 +274,125 @@ describe("MCP tools", () => {
       status: "failed",
       code: "app_server_offline",
       error: "App workspace is offline"
+    });
+  });
+
+  it("lists scheduled messages for a specified resumed workspace thread", async () => {
+    const { app, config } = await setup();
+    const service = new AgentMeshMcpService(
+      app.database,
+      config,
+      app.events,
+      app.appServerLifecycle,
+      app.threadStatusCache
+    );
+    const { appServerId, threadId } = seedOnlineAppServerWithIdleThread(app, "SchedulerWorkspace", "Main");
+    seedScheduledMessage(app, {
+      id: "sched-1",
+      appServerId,
+      threadId,
+      text: "Follow up later",
+      status: "scheduled"
+    });
+
+    expect(
+      service.listScheduledMessages({
+        appWorkspaceName: "SchedulerWorkspace",
+        threadName: "Main"
+      })
+    ).toEqual({
+      items: [
+        expect.objectContaining({
+          id: "sched-1",
+          app_workspace_name: "SchedulerWorkspace",
+          thread_name: "Main",
+          text: "Follow up later",
+          status: "scheduled"
+        })
+      ]
+    });
+  });
+
+  it("lists scheduled messages for items created through the unified send interface", async () => {
+    const { app, config } = await setup();
+    const service = new AgentMeshMcpService(
+      app.database,
+      config,
+      app.events,
+      app.appServerLifecycle,
+      app.threadStatusCache
+    );
+    seedOnlineAppServerWithIdleThread(app, "SchedulerWorkspace", "Main");
+
+    const created = await service.sendMessage({
+      appWorkspaceName: "SchedulerWorkspace",
+      threadName: "Main",
+      text: "Schedule this",
+      delaySeconds: 90
+    });
+
+    expect(created).toMatchObject({
+      status: "scheduled"
+    });
+
+    const createdItemId =
+      created.status === "scheduled" ? created.scheduled_message_id : null;
+    expect(createdItemId).not.toBeNull();
+    if (createdItemId === null) {
+      throw new Error("Expected scheduled delayed send to succeed");
+    }
+
+    expect(
+      service.listScheduledMessages({
+        appWorkspaceName: "SchedulerWorkspace",
+        threadName: "Main"
+      })
+    ).toEqual({
+      items: [
+        expect.objectContaining({
+          id: createdItemId,
+          status: "scheduled",
+          app_workspace_name: "SchedulerWorkspace",
+          thread_name: "Main"
+        })
+      ]
+    });
+  });
+
+  it("returns scheduler MCP routing errors without guessing", async () => {
+    const { app, config } = await setup();
+    const service = new AgentMeshMcpService(
+      app.database,
+      config,
+      app.events,
+      app.appServerLifecycle,
+      app.threadStatusCache
+    );
+
+    expect(
+      service.listScheduledMessages({
+        appWorkspaceName: "missing",
+        threadName: "Main"
+      })
+    ).toEqual({
+      status: "failed",
+      code: "app_server_not_found",
+      error: "App workspace not found"
+    });
+
+    seedOnlineAppServerWithIdleThread(app, "SchedulerWorkspace", "Main");
+
+    await expect(
+      service.sendMessage({
+        appWorkspaceName: "SchedulerWorkspace",
+        threadName: "Missing",
+        text: "hello",
+        delaySeconds: 30
+      })
+    ).resolves.toEqual({
+      status: "failed",
+      code: "thread_not_found",
+      error: "Thread not found"
     });
   });
 
@@ -388,6 +535,67 @@ function insertCurrentThread(
       now,
       now
     );
+}
+
+function seedOnlineAppServerWithIdleThread(
+  app: TestBackend["app"],
+  workspaceName: string,
+  threadName: string
+): { readonly appServerId: string; readonly threadId: string } {
+  const now = Date.now();
+  const appServerId = `app-${randomUUID()}`;
+  const threadId = randomUUID();
+  const codexThreadId = `codex-${randomUUID()}`;
+
+  app.database.sqlite
+    .prepare(
+      `
+        INSERT INTO app_servers (
+          id, name, host_kind, host, ssh_user, ssh_port, workspace, command, vscode_path,
+          environment_json, observation_prompt, active_observation_skills_json, status,
+          last_started_at, last_seen_at, last_error, created_at, updated_at
+        ) VALUES (?, ?, 'local', 'localhost', NULL, NULL, ?, 'codex app-server', 'code', '{}',
+          NULL, '[]', 'online', NULL, NULL, NULL, ?, ?)
+      `
+    )
+    .run(appServerId, workspaceName, `/tmp/${workspaceName}`, now, now);
+
+  app.database.sqlite
+    .prepare(
+      `
+        INSERT INTO threads (
+          id, app_server_id, codex_thread_id, thread_name, title, status, cwd,
+          is_current, is_gone, imported_at, last_seen_at, raw_metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, NULL, 'idle', NULL, 1, 0, NULL, ?, ?, ?, ?)
+      `
+    )
+    .run(threadId, appServerId, codexThreadId, threadName, now, JSON.stringify({}), now, now);
+
+  app.threadStatusCache.set(threadId, "idle");
+  return { appServerId, threadId };
+}
+
+function seedScheduledMessage(
+  app: TestBackend["app"],
+  input: {
+    readonly id: string;
+    readonly appServerId: string;
+    readonly threadId: string;
+    readonly text: string;
+    readonly status: "scheduled" | "sending" | "failed" | "sent" | "acknowledged";
+  }
+): void {
+  const now = Date.now();
+  app.database.sqlite
+    .prepare(
+      `
+        INSERT INTO scheduled_messages (
+          id, app_server_id, thread_id, text, run_at, status, attempt_count,
+          last_error, last_attempt_at, sent_message_id, sent_turn_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, NULL, ?, ?)
+      `
+    )
+    .run(input.id, input.appServerId, input.threadId, input.text, now + 60_000, input.status, now, now);
 }
 
 function createFakeCodexScript(tempDir: string): string {

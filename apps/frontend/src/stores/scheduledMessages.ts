@@ -1,5 +1,4 @@
 import type {
-  ScheduledMessageCreateRequest,
   ScheduledMessageDto,
   ScheduledMessageUpdateRequest
 } from "@agentmesh/shared";
@@ -31,9 +30,21 @@ export const useScheduledMessageStore = defineStore("scheduledMessages", {
       }
     },
 
-    async create(payload: ScheduledMessageCreateRequest): Promise<ScheduledMessageDto | null> {
+    async create(payload: {
+      readonly threadId: string;
+      readonly text: string;
+      readonly delaySeconds: number;
+    }): Promise<ScheduledMessageDto | null> {
       try {
-        const item = await apiClient.createScheduledMessage(payload);
+        const response = await apiClient.sendMessage({
+          threadId: payload.threadId,
+          text: payload.text,
+          delaySeconds: payload.delaySeconds
+        });
+        if (response.status !== "scheduled") {
+          throw new Error("Expected delayed send to create a scheduled message");
+        }
+        const item = response.item;
         this.upsert(item);
         return item;
       } catch (error) {
@@ -52,17 +63,6 @@ export const useScheduledMessageStore = defineStore("scheduledMessages", {
         return item;
       } catch (error) {
         notifyError(error, "Failed to update scheduled message");
-        return null;
-      }
-    },
-
-    async cancel(id: string): Promise<ScheduledMessageDto | null> {
-      try {
-        const item = await apiClient.cancelScheduledMessage(id);
-        this.upsert(item);
-        return item;
-      } catch (error) {
-        notifyError(error, "Failed to cancel scheduled message");
         return null;
       }
     },
@@ -112,8 +112,7 @@ function sortScheduledMessages(items: readonly ScheduledMessageDto[]): Scheduled
     sending: 1,
     failed: 2,
     sent: 3,
-    canceled: 4,
-    acknowledged: 5
+    acknowledged: 4
   };
 
   return [...items].sort((left, right) => {

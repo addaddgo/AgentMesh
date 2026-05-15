@@ -18,7 +18,7 @@ describe("ScheduledMessageService", () => {
     seedAppServer(database, { status: "online" });
     seedThread(database);
 
-    const sendText = vi.fn((): SendMessageResponse => {
+    const sendText = vi.fn((): Extract<SendMessageResponse, { readonly status: "queued" }> => {
       const now = Date.now();
       database.sqlite
         .prepare(
@@ -42,6 +42,7 @@ describe("ScheduledMessageService", () => {
         .run("msg-1", JSON.stringify([{ type: "markdown", text: "hello later" }]), now, now);
 
       return {
+        status: "queued",
         message: {
           id: "msg-1",
           appServerId: "app-1",

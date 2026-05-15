@@ -218,16 +218,6 @@
                   Edit
                 </el-button>
                 <el-button
-                  v-if="item.status === 'scheduled'"
-                  size="small"
-                  type="danger"
-                  plain
-                  :loading="cancelingId === item.id"
-                  @click="cancelItem(item.id)"
-                >
-                  Cancel
-                </el-button>
-                <el-button
                   v-if="item.status === 'scheduled' || item.status === 'failed'"
                   size="small"
                   type="danger"
@@ -284,12 +274,11 @@ const editDelayHours = ref(0);
 const editDelayMinutes = ref(5);
 const editText = ref("");
 const updatingId = ref<string | null>(null);
-const cancelingId = ref<string | null>(null);
 const deletingId = ref<string | null>(null);
 const acknowledgingId = ref<string | null>(null);
 const createDropTarget = ref(false);
 const editDropTarget = ref(false);
-const editableStatuses = new Set<ScheduledMessageDto["status"]>(["scheduled", "failed", "canceled"]);
+const editableStatuses = new Set<ScheduledMessageDto["status"]>(["scheduled", "failed"]);
 
 const currentThreads = computed<readonly ThreadDto[]>(() =>
   selectedAppServerId.value === null ? [] : threads.byAppServerId[selectedAppServerId.value] ?? []
@@ -365,7 +354,6 @@ async function createItem(): Promise<void> {
   submitting.value = true;
   try {
     const created = await store.create({
-      appServerId: selectedAppServerId.value,
       threadId: selectedThreadId.value,
       text: draftText.value,
       delaySeconds: createDelaySeconds.value
@@ -419,15 +407,6 @@ async function saveEdit(id: string): Promise<void> {
     }
   } finally {
     updatingId.value = null;
-  }
-}
-
-async function cancelItem(id: string): Promise<void> {
-  cancelingId.value = id;
-  try {
-    await store.cancel(id);
-  } finally {
-    cancelingId.value = null;
   }
 }
 
@@ -506,8 +485,6 @@ function statusSummary(item: ScheduledMessageDto): string {
       return item.lastError === null
         ? `Failed after ${item.attemptCount} attempt${item.attemptCount === 1 ? "" : "s"}`
         : `Failed after ${item.attemptCount} attempt${item.attemptCount === 1 ? "" : "s"}: ${item.lastError}`;
-    case "canceled":
-      return "Canceled";
     case "acknowledged":
       return "Acknowledged";
     default:

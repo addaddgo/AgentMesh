@@ -67,13 +67,16 @@ export const useMessageStore = defineStore("messages", {
     async send(
       threadId: string,
       text: string,
-      attachments: readonly PendingImageUploadDto[] = []
+      attachments: readonly PendingImageUploadDto[] = [],
+      delaySeconds = 0
     ): Promise<SendMessageResponse | null> {
       try {
-        const response = await apiClient.sendMessage({ threadId, text, attachments });
-        this.upsertMessage(response.message);
-        this.turnsById[response.turn.id] = response.turn;
-        this.upsertQueueItem(response.queueItem);
+        const response = await apiClient.sendMessage({ threadId, text, attachments, delaySeconds });
+        if (response.status === "queued") {
+          this.upsertMessage(response.message);
+          this.turnsById[response.turn.id] = response.turn;
+          this.upsertQueueItem(response.queueItem);
+        }
         return response;
       } catch (error) {
         notifyError(error, "Failed to send message");

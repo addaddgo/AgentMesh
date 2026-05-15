@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 
 import type {
   PendingImageUploadDto,
-  ScheduledMessageCreateRequest,
   ScheduledMessageDto,
   ScheduledMessageStatus,
   ScheduledMessageUpdateRequest,
@@ -45,10 +44,10 @@ type SendTextFn = (
   threadId: string,
   text: string,
   attachments?: readonly PendingImageUploadDto[]
-) => SendMessageResponse;
+) => Extract<SendMessageResponse, { readonly status: "queued" }>;
 
 const BACKEND_RESTART_ERROR = "Backend restarted before scheduled send completed";
-const EDITABLE_STATUSES: readonly ScheduledMessageStatus[] = ["scheduled", "failed", "canceled"];
+const EDITABLE_STATUSES: readonly ScheduledMessageStatus[] = ["scheduled", "failed"];
 
 export class ScheduledMessageService {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -117,8 +116,7 @@ export class ScheduledMessageService {
               WHEN 'sending' THEN 1
               WHEN 'failed' THEN 2
               WHEN 'sent' THEN 3
-              WHEN 'canceled' THEN 4
-              ELSE 5
+              ELSE 4
             END ASC,
             run_at ASC,
             created_at DESC
@@ -133,7 +131,12 @@ export class ScheduledMessageService {
     return toScheduledMessageDto(this.getRow(id));
   }
 
-  public create(input: ScheduledMessageCreateRequest): ScheduledMessageDto {
+  public create(input: {
+    readonly appServerId: string;
+    readonly threadId: string;
+    readonly text: string;
+    readonly delaySeconds: number;
+  }): ScheduledMessageDto {
     const thread = this.requireThread(input.threadId, input.appServerId);
     if (thread.is_gone === 1) {
       throw new RequestValidationError("Thread is gone and cannot receive scheduled messages");
@@ -219,29 +222,6 @@ export class ScheduledMessageService {
 
     const item = this.get(id);
     this.publishUpdated("updated", item);
-    return item;
-  }
-
-  public cancel(id: string): ScheduledMessageDto {
-    const existing = this.getRow(id);
-    if (existing.status !== "scheduled") {
-      throw new RequestValidationError("Only scheduled messages can be canceled");
-    }
-
-    const now = Date.now();
-    this.database.sqlite
-      .prepare(
-        `
-          UPDATE scheduled_messages
-          SET status = 'canceled',
-              updated_at = ?
-          WHERE id = ?
-        `
-      )
-      .run(now, id);
-
-    const item = this.get(id);
-    this.publishUpdated("canceled", item);
     return item;
   }
 
@@ -344,7 +324,10 @@ export class ScheduledMessageService {
     }
   }
 
-  private markSent(id: string, response: SendMessageResponse): ScheduledMessageDto {
+  private markSent(
+    id: string,
+    response: Extract<SendMessageResponse, { readonly status: "queued" }>
+  ): ScheduledMessageDto {
     const now = Date.now();
     this.database.sqlite
       .prepare(

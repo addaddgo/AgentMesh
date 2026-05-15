@@ -2,7 +2,7 @@ import type { SkillDto, SkillSyncResultDto } from "@agentmesh/shared";
 import { defineStore } from "pinia";
 
 import { apiClient } from "../api/client";
-import { notifyError } from "./errors";
+import { notifyError, notifySuccess } from "./errors";
 
 type SkillState = {
   sourceSkills: SkillDto[];
@@ -82,7 +82,14 @@ export const useSkillStore = defineStore("skills", {
           skillNames: [...new Set(skillNames)],
           appServerIds: this.selectedAppServerIds
         });
-        this.syncResults = [...response.results];
+        this.syncResults = response.results.filter((result) => result.status !== "synced");
+        const syncedCount = response.results.filter((result) => result.status === "synced").length;
+        if (syncedCount > 0) {
+          notifySuccess(
+            `Synced ${syncedCount} skill target${syncedCount === 1 ? "" : "s"}.`,
+            "Skills synced"
+          );
+        }
       } catch (error) {
         notifyError(error, "Failed to sync skills");
       } finally {

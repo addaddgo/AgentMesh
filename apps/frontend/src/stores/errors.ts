@@ -40,3 +40,12 @@ export function notifyInfo(message: string, title = "AgentMesh"): void {
     duration: 3500
   });
 }
+
+export function notifySuccess(message: string, title = "AgentMesh"): void {
+  ElNotification({
+    title,
+    message,
+    type: "success",
+    duration: 3500
+  });
+}

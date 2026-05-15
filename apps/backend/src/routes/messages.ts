@@ -7,6 +7,7 @@ import { validateBody } from "../validation.js";
 const sendMessageSchema = z.object({
   threadId: z.string().min(1),
   text: z.string().default(""),
+  delaySeconds: z.coerce.number().int().min(0).default(0),
   attachments: z
     .array(
       z
@@ -29,8 +30,15 @@ export async function registerMessageRoutes(app: FastifyInstance): Promise<void>
     "/api/messages/send",
     { preHandler: validateBody(sendMessageSchema) },
     async (request, reply): Promise<SendMessageResponse> => {
-      const { threadId, text, attachments } = request.body as z.infer<typeof sendMessageSchema>;
-      const response = app.messageSendService.sendText(threadId, text, attachments);
+      const { threadId, text, delaySeconds, attachments } = request.body as z.infer<
+        typeof sendMessageSchema
+      >;
+      const response = app.messageDispatchService.dispatch(
+        threadId,
+        text,
+        attachments,
+        delaySeconds
+      );
       reply.code(202);
       return response;
     }

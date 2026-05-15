@@ -16,28 +16,22 @@ describe("scheduled message routes", () => {
     return backend;
   }
 
-  it("creates and lists scheduled messages", async () => {
+  it("lists delayed sends created through the unified message send route", async () => {
     const { app } = await setup();
 
     const create = await app.inject({
       method: "POST",
-      url: "/api/scheduled-messages",
+      url: "/api/messages/send",
       payload: {
-        appServerId: "app-1",
         threadId: "thread-1",
         text: "Follow up in five minutes",
         delaySeconds: 300
       }
     });
 
-    expect(create.statusCode).toBe(200);
+    expect(create.statusCode).toBe(202);
     expect(create.json()).toMatchObject({
-      item: {
-        appServerId: "app-1",
-        threadId: "thread-1",
-        text: "Follow up in five minutes",
-        status: "scheduled"
-      }
+      status: "scheduled"
     });
 
     const list = await app.inject({
@@ -58,13 +52,12 @@ describe("scheduled message routes", () => {
     });
   });
 
-  it("updates failed or scheduled messages and cancels scheduled ones", async () => {
+  it("updates failed or scheduled messages", async () => {
     const { app } = await setup();
     const created = await app.inject({
       method: "POST",
-      url: "/api/scheduled-messages",
+      url: "/api/messages/send",
       payload: {
-        appServerId: "app-1",
         threadId: "thread-1",
         text: "First draft",
         delaySeconds: 60
@@ -90,27 +83,14 @@ describe("scheduled message routes", () => {
       }
     });
 
-    const canceled = await app.inject({
-      method: "POST",
-      url: `/api/scheduled-messages/${itemId}/cancel`
-    });
-
-    expect(canceled.statusCode).toBe(200);
-    expect(canceled.json()).toMatchObject({
-      item: {
-        id: itemId,
-        status: "canceled"
-      }
-    });
   });
 
   it("deletes scheduled or failed messages", async () => {
     const { app } = await setup();
     const created = await app.inject({
       method: "POST",
-      url: "/api/scheduled-messages",
+      url: "/api/messages/send",
       payload: {
-        appServerId: "app-1",
         threadId: "thread-1",
         text: "Delete me",
         delaySeconds: 60
@@ -204,7 +184,7 @@ function seedScheduledMessage(
   backend: TestBackend,
   options: {
     readonly id: string;
-    readonly status: "scheduled" | "sending" | "failed" | "sent" | "canceled" | "acknowledged";
+    readonly status: "scheduled" | "sending" | "failed" | "sent" | "acknowledged";
     readonly text: string;
   }
 ): void {

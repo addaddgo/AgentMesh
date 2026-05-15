@@ -23,6 +23,7 @@ import { registerTodoRoutes } from "./routes/todos.js";
 import { AppServerLifecycleRegistry } from "./services/app-server-lifecycle.js";
 import { AppServerService } from "./services/app-servers.js";
 import { EventService } from "./services/events.js";
+import { MessageDispatchService } from "./services/message-dispatch.js";
 import { MessageSendService } from "./services/message-send.js";
 import { ScheduledMessageService } from "./services/scheduled-messages.js";
 import { ThreadStatusCache } from "./services/thread-status-cache.js";
@@ -68,7 +69,12 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
   const scheduledMessageService = new ScheduledMessageService(
     database,
     events,
-    messageSendService.sendText.bind(messageSendService)
+    messageSendService.sendQueuedText.bind(messageSendService)
+  );
+  const messageDispatchService = new MessageDispatchService(
+    database,
+    messageSendService,
+    scheduledMessageService
   );
   scheduledMessageService.markInFlightFailedAfterBackendRestart();
   scheduledMessageService.start();
@@ -78,6 +84,7 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
   app.decorate("threadStatusCache", threadStatusCache);
   app.decorate("appServerLifecycle", appServerLifecycle);
   app.decorate("messageSendService", messageSendService);
+  app.decorate("messageDispatchService", messageDispatchService);
   app.decorate("scheduledMessageService", scheduledMessageService);
 
   await app.register(fastifyMultipart);
@@ -132,6 +139,7 @@ declare module "fastify" {
     threadStatusCache: ThreadStatusCache;
     appServerLifecycle: AppServerLifecycleRegistry;
     messageSendService: MessageSendService;
+    messageDispatchService: MessageDispatchService;
     scheduledMessageService: ScheduledMessageService;
   }
 }

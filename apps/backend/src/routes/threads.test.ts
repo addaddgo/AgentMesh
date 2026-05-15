@@ -500,6 +500,7 @@ function createFakeCodexScript(
       import readline from "node:readline";
 
       const lines = readline.createInterface({ input: process.stdin });
+      process.stdin.resume();
       const requestsPath = path.join(process.cwd(), "requests.ndjson");
       const threadList = ${JSON.stringify(options.threadList)};
       const threadRead = ${JSON.stringify(options.threadRead ?? null)};

@@ -216,6 +216,7 @@ function createApprovalFakeCodexScript(tempDir: string): string {
       import readline from "node:readline";
 
       const lines = readline.createInterface({ input: process.stdin });
+      process.stdin.resume();
       const requestsPath = path.join(process.cwd(), "requests.ndjson");
       let pendingTurnRequestId = null;
 

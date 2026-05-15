@@ -570,6 +570,7 @@ function createFakeCodexScript(tempDir: string): string {
       import readline from "node:readline";
 
       const lines = readline.createInterface({ input: process.stdin });
+      process.stdin.resume();
       const requestsPath = path.join(process.cwd(), "requests.ndjson");
 
       for await (const line of lines) {
@@ -624,6 +625,7 @@ function createResumeRequiredCodexScript(tempDir: string): string {
       import readline from "node:readline";
 
       const lines = readline.createInterface({ input: process.stdin });
+      process.stdin.resume();
       const requestsPath = path.join(process.cwd(), "requests.ndjson");
       let loaded = false;
 

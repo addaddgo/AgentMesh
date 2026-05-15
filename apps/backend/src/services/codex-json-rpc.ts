@@ -68,6 +68,7 @@ export type CodexProtocolErrorRecord = {
 export type CodexProcessExit = {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
+  readonly stderr?: string | undefined;
 };
 
 export type CodexJsonRpcTransportOptions = {
@@ -170,11 +171,11 @@ export class CodexJsonRpcTransport {
 
     this.processClosed =
       options.onProcessClose === undefined
-        ? Promise.resolve()
+          ? Promise.resolve()
         : new Promise<void>((resolve) => {
             options.onProcessClose?.((exit) => {
               this.hasProcessClosed = true;
-              this.rejectAllPending(new CodexJsonRpcClosedError("Codex JSON-RPC process closed"));
+              this.rejectAllPending(new CodexJsonRpcClosedError(formatClosedMessage(exit)));
               for (const handler of this.processCloseHandlers) {
                 handler(exit);
               }
@@ -212,6 +213,14 @@ export class CodexJsonRpcTransport {
     requestTimeoutMs?: number
   ): CodexJsonRpcTransport {
     let emittedClose = false;
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      if (stderr.length > 8_000) {
+        stderr = stderr.slice(-8_000);
+      }
+    });
     const emitClose = (exit: CodexProcessExit, handler: (exit: CodexProcessExit) => void): void => {
       if (emittedClose) {
         return;
@@ -228,10 +237,10 @@ export class CodexJsonRpcTransport {
       },
       onProcessClose: (handler) => {
         child.once("close", (code, signal) => {
-          emitClose({ code, signal }, handler);
+          emitClose({ code, signal, stderr: stderr.trim() || undefined }, handler);
         });
         child.once("error", () => {
-          emitClose({ code: 127, signal: null }, handler);
+          emitClose({ code: 127, signal: null, stderr: stderr.trim() || undefined }, handler);
         });
       },
       requestTimeoutMs
@@ -535,6 +544,22 @@ function spawnLocalCommand(
     ...options,
     stdio: "pipe"
   });
+}
+
+function formatClosedMessage(exit: CodexProcessExit): string {
+  let message = "Codex JSON-RPC process closed";
+
+  if (exit.code !== null) {
+    message += ` with exit code ${exit.code}`;
+  } else if (exit.signal !== null) {
+    message += ` due to signal ${exit.signal}`;
+  }
+
+  if (exit.stderr !== undefined && exit.stderr.length > 0) {
+    message += `: ${exit.stderr}`;
+  }
+
+  return message;
 }
 
 function splitCommand(command: string): [string, ...string[]] {

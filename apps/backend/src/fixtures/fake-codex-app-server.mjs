@@ -6,6 +6,8 @@ import readline from "node:readline";
 
 const requestsPath = path.join(process.cwd(), "requests.ndjson");
 const lines = readline.createInterface({ input: process.stdin });
+process.stdin.resume();
+const keepAlive = setInterval(() => {}, 1 << 30);
 let nextTurnNumber = 1;
 let pendingApprovalTurnRequestId = null;
 
@@ -111,6 +113,7 @@ for await (const line of lines) {
     pendingApprovalTurnRequestId = null;
   }
 }
+lines.on("close", () => clearInterval(keepAlive));
 
 function write(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);

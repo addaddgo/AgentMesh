@@ -1184,6 +1184,7 @@ function createFakeCodexScript(
       import readline from "node:readline";
 
       const lines = readline.createInterface({ input: process.stdin });
+      process.stdin.resume();
       const countPath = path.join(process.cwd(), "initialize-count.txt");
       const requestsPath = path.join(process.cwd(), "requests.ndjson");
       const defaultThreadListPages = ${JSON.stringify(options.threadListPages ?? [{ threads: [] }])};

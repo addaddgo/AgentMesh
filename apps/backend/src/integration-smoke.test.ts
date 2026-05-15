@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -8,10 +7,6 @@ import type { ApprovalDto, ChatMessage, SseEvent, ThreadDto } from "@agentmesh/s
 
 import { createTestBackend, type TestBackend } from "./test-helpers.js";
 import { AgentMeshMcpService } from "./services/mcp.js";
-
-const fakeCodexFixturePath = fileURLToPath(
-  new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url)
-);
 
 describe("backend integration with fake Codex app-server", () => {
   let backend: TestBackend | undefined;
@@ -35,7 +30,7 @@ describe("backend integration with fake Codex app-server", () => {
       payload: {
         hostKind: "local",
         workspace,
-        command: `${process.execPath} ${fakeCodexFixturePath}`
+        command: `bash -lc 'exec env -u NODE_OPTIONS ${process.execPath} ${createFakeCodexScript(tempDir)}'`
       }
     });
     expect(created.statusCode).toBe(201);
@@ -176,7 +171,7 @@ describe("backend integration with fake Codex app-server", () => {
       threadName: "Main",
       text: "Hello from MCP"
     });
-    expect(mcpSend).toEqual({ status: "sent" });
+    expect(mcpSend).toMatchObject({ status: "queued" });
 
     const copiedImagePath = path.join(workspace, ".agentmesh", "images", attachment.filename);
     const requests = readJsonLines(path.join(workspace, "requests.ndjson"));
@@ -354,6 +349,139 @@ async function createAppServer(
   const created = await backend.app.inject({ method: "POST", url: "/api/app-servers", payload });
   expect(created.statusCode).toBe(201);
   return created.json<{ id: string }>().id;
+}
+
+function createFakeCodexScript(tempDir: string): string {
+  const scriptPath = path.join(tempDir, `fake-codex-${Math.random().toString(16).slice(2)}.mjs`);
+  fs.writeFileSync(
+    scriptPath,
+    `
+      import fs from "node:fs";
+      import path from "node:path";
+      import readline from "node:readline";
+
+      const requestsPath = path.join(process.cwd(), "requests.ndjson");
+      const lines = readline.createInterface({ input: process.stdin });
+      process.stdin.resume();
+      const keepAlive = setInterval(() => {}, 1 << 30);
+      let nextTurnNumber = 1;
+      let pendingApprovalTurnRequestId = null;
+
+      lines.on("line", (line) => {
+        const request = JSON.parse(line);
+        fs.appendFileSync(requestsPath, JSON.stringify(request) + "\\n");
+
+        if (request.method === "initialize") {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { ok: true, fixture: "fake-codex" }
+          }) + "\\n");
+          return;
+        } else if (request.method === "thread/list") {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              threads: [
+                {
+                  id: "codex-thread-1",
+                  name: "Main",
+                  title: "Main thread",
+                  status: "idle",
+                  cwd: process.cwd()
+                }
+              ]
+            }
+          }) + "\\n");
+          return;
+        } else if (request.method === "thread/read") {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              turns: [
+                {
+                  id: "imported-turn-1",
+                  createdAt: 1700000000000,
+                  messages: [
+                    {
+                      role: "user",
+                      text: "Imported question",
+                      createdAt: 1700000000000
+                    },
+                    {
+                      role: "assistant",
+                      text: "Imported answer",
+                      createdAt: 1700000000001
+                    }
+                  ]
+                }
+              ]
+            }
+          }) + "\\n");
+          return;
+        } else if (request.method === "turn/start") {
+          const text = getInputText(request.params?.input);
+
+          if (text.includes("approval")) {
+            pendingApprovalTurnRequestId = request.id;
+            process.stdout.write(JSON.stringify({
+              jsonrpc: "2.0",
+              id: "approval-req-1",
+              method: "item/commandExecution/requestApproval",
+              params: {
+                threadId: request.params.threadId,
+                command: "touch approved.txt"
+              }
+            }) + "\\n");
+            return;
+          }
+
+          const turnId = "codex-turn-" + String(nextTurnNumber);
+          nextTurnNumber += 1;
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            method: "thread/message",
+            params: {
+              threadId: request.params.threadId,
+              role: "assistant",
+              status: "completed",
+              text: text.includes("MCP") ? "MCP response" : "Codex response"
+            }
+          }) + "\\n");
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { turn: { id: turnId }, status: "completed" }
+          }) + "\\n");
+          return;
+        } else if (request.id === "approval-req-1" && pendingApprovalTurnRequestId !== null) {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: pendingApprovalTurnRequestId,
+            result: { turn: { id: "codex-turn-approved" }, status: "completed" }
+          }) + "\\n");
+          pendingApprovalTurnRequestId = null;
+          return;
+        }
+      });
+      lines.on("close", () => clearInterval(keepAlive));
+
+      function getInputText(input) {
+        if (!Array.isArray(input)) {
+          return "";
+        }
+
+        return input
+          .filter((part) => part && typeof part === "object" && part.type === "text")
+          .map((part) => part.text)
+          .filter((text) => typeof text === "string")
+          .join("\\n");
+      }
+    `
+  );
+  return scriptPath;
 }
 
 async function waitForMessageStatus(

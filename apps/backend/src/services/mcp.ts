@@ -16,7 +16,10 @@ export type McpWorkspaceThread = {
 
 export type McpSendMessageResult =
   | {
-      readonly status: "sent";
+      readonly status: "queued";
+      readonly message_id: string;
+      readonly turn_id: string;
+      readonly queue_item_id: string;
     }
   | {
       readonly status: "failed";
@@ -146,7 +149,12 @@ export class AgentMeshMcpService {
     }
 
     const response = this.sends.sendText(thread.id, input.text, []);
-    return this.waitForSendResult(response.queueItem.id);
+    return {
+      status: "queued",
+      message_id: response.message.id,
+      turn_id: response.turn.id,
+      queue_item_id: response.queueItem.id
+    };
   }
 
   private findAppServerByName(name: string): AppServerRow | undefined {
@@ -173,60 +181,6 @@ export class AgentMeshMcpService {
       )
       .all(appServerId) as ThreadRow[];
   }
-
-  private async waitForSendResult(queueItemId: string): Promise<McpSendMessageResult> {
-    const deadline = Date.now() + SEND_POLL_TIMEOUT_MS;
-
-    while (Date.now() <= deadline) {
-      const row = this.database.sqlite
-        .prepare("SELECT status, error FROM queue_items WHERE id = ?")
-        .get(queueItemId) as QueueStatusRow | undefined;
-
-      if (row === undefined) {
-        return {
-          status: "failed",
-          error: "Queue item disappeared before completion"
-        };
-      }
-
-      if (row.status === "completed") {
-        return { status: "sent" };
-      }
-
-      if (row.status === "failed") {
-        return {
-          status: "failed",
-          error: row.error ?? "Message send failed"
-        };
-      }
-
-      if (row.status === "waiting_approval") {
-        return {
-          status: "failed",
-          error: "Message send is waiting for approval"
-        };
-      }
-
-      await sleep(SEND_POLL_INTERVAL_MS);
-    }
-
-    return {
-      status: "failed",
-      error: "Timed out waiting for message delivery"
-    };
-  }
-}
-
-const SEND_POLL_INTERVAL_MS = 150;
-const SEND_POLL_TIMEOUT_MS = 30_000;
-
-type QueueStatusRow = {
-  readonly status: string;
-  readonly error: string | null;
-};
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function createAgentMeshMcpServer(service: AgentMeshMcpService): McpServer {

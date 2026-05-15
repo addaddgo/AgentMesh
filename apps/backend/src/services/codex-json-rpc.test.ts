@@ -144,6 +144,7 @@ describe("CodexJsonRpcTransport", () => {
         import readline from "node:readline";
 
         const lines = readline.createInterface({ input: process.stdin });
+        process.stdin.resume();
         for await (const line of lines) {
           const request = JSON.parse(line);
           process.stdout.write(JSON.stringify({

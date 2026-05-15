@@ -137,7 +137,11 @@ describe("MCP tools", () => {
       text: "Hello from MCP"
     });
 
-    expect(result).toEqual({ status: "sent" });
+    expect(result).toMatchObject({ status: "queued" });
+
+    if (result.status !== "queued") {
+      throw new Error("Expected queued MCP send");
+    }
 
     const turnStart = readJsonLines(path.join(workspace, "requests.ndjson")).find(
       (request): request is { method: string; params: unknown } =>
@@ -155,26 +159,25 @@ describe("MCP tools", () => {
           LIMIT 1
         `
       )
-      .get(threadId) as { kind: string; status: string };
+      .get(result.queue_item_id) as { kind: string; status: string };
     const message = app.database.sqlite
       .prepare(
         `
           SELECT thread_id, status, parts_json
           FROM messages
-          WHERE thread_id = ? AND role = 'user'
-          ORDER BY created_at DESC
-          LIMIT 1
+          WHERE id = ?
         `
       )
-      .get(threadId) as { thread_id: string; status: string; parts_json: string };
+      .get(result.message_id) as { thread_id: string; status: string; parts_json: string };
 
     expect(turnStart?.params).toEqual({
       threadId: "codex-thread-1",
       input: [{ type: "text", text: "Hello from MCP" }]
     });
-    expect(queueItem).toEqual({ kind: "send_message", status: "completed" });
+    expect(queueItem.kind).toBe("send_message");
+    expect(["pending", "running", "completed"]).toContain(queueItem.status);
     expect(message.thread_id).toBe(threadId);
-    expect(message.status).toBe("completed");
+    expect(["queued", "sent", "streaming", "completed"]).toContain(message.status);
     expect(JSON.parse(message.parts_json)).toEqual([{ type: "markdown", text: "Hello from MCP" }]);
   });
 
@@ -397,9 +400,11 @@ function createFakeCodexScript(tempDir: string): string {
       import readline from "node:readline";
 
       const lines = readline.createInterface({ input: process.stdin });
+      process.stdin.resume();
+      const keepAlive = setInterval(() => {}, 1 << 30);
       const requestsPath = path.join(process.cwd(), "requests.ndjson");
 
-      for await (const line of lines) {
+      lines.on("line", (line) => {
         const request = JSON.parse(line);
         fs.appendFileSync(requestsPath, JSON.stringify(request) + "\\n");
 
@@ -409,12 +414,14 @@ function createFakeCodexScript(tempDir: string): string {
             id: request.id,
             result: { ok: true }
           }) + "\\n");
+          return;
         } else if (request.method === "thread/list") {
           process.stdout.write(JSON.stringify({
             jsonrpc: "2.0",
             id: request.id,
             result: { threads: [{ id: "codex-thread-1", name: "Main", status: "idle" }] }
           }) + "\\n");
+          return;
         } else if (request.method === "turn/start") {
           process.stdout.write(JSON.stringify({
             jsonrpc: "2.0",
@@ -431,8 +438,10 @@ function createFakeCodexScript(tempDir: string): string {
             id: request.id,
             result: { turn: { id: "codex-turn-1" }, status: "completed" }
           }) + "\\n");
+          return;
         }
-      }
+      });
+      lines.on("close", () => clearInterval(keepAlive));
     `
   );
   return scriptPath;

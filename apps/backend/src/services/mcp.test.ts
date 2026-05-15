@@ -20,6 +20,65 @@ describe("MCP tools", () => {
     return backend;
   }
 
+  it("filters out the current workspace from workspace thread listings", async () => {
+    const { app, config } = await setup();
+    const service = new AgentMeshMcpService(
+      app.database,
+      config,
+      app.events,
+      app.appServerLifecycle,
+      app.threadStatusCache
+    );
+    const now = Date.now();
+
+    app.database.sqlite
+      .prepare(
+        `
+          INSERT INTO app_servers (
+            id, name, host_kind, host, ssh_user, ssh_port, workspace, command, vscode_path,
+            environment_json, observation_prompt, active_observation_skills_json, status,
+            last_started_at, last_seen_at, last_error, created_at, updated_at
+          ) VALUES (?, ?, 'local', 'localhost', NULL, NULL, ?, 'codex app-server', 'code', '{}',
+            NULL, '[]', 'online', NULL, NULL, NULL, ?, ?)
+        `
+      )
+      .run("app-self", "SelfWorkspace", "/tmp/self", now, now);
+    app.database.sqlite
+      .prepare(
+        `
+          INSERT INTO app_servers (
+            id, name, host_kind, host, ssh_user, ssh_port, workspace, command, vscode_path,
+            environment_json, observation_prompt, active_observation_skills_json, status,
+            last_started_at, last_seen_at, last_error, created_at, updated_at
+          ) VALUES (?, ?, 'local', 'localhost', NULL, NULL, ?, 'codex app-server', 'code', '{}',
+            NULL, '[]', 'online', NULL, NULL, NULL, ?, ?)
+        `
+      )
+      .run("app-peer", "PeerWorkspace", "/tmp/peer", now, now);
+
+    insertCurrentThread(app, "app-self", {
+      codexThreadId: "self-thread",
+      threadName: "Main"
+    });
+    insertCurrentThread(app, "app-peer", {
+      codexThreadId: "peer-thread",
+      threadName: "Main"
+    });
+
+    const selfThread = app.database.sqlite
+      .prepare("SELECT id FROM threads WHERE app_server_id = 'app-self'")
+      .get() as { id: string };
+    const peerThread = app.database.sqlite
+      .prepare("SELECT id FROM threads WHERE app_server_id = 'app-peer'")
+      .get() as { id: string };
+    app.threadStatusCache.set(selfThread.id, "idle");
+    app.threadStatusCache.set(peerThread.id, "idle");
+
+    expect(service.listWorkspaceThreads("SelfWorkspace")).toEqual({
+      threads: [{ app_workspace_name: "PeerWorkspace", thread_name: "Main" }]
+    });
+  });
+
   it("lists resumed threads for online workspaces using MCP field names", async () => {
     const { app, tempDir, config } = await setup();
     const workspace = path.join(tempDir, "workspace");
@@ -72,24 +131,13 @@ describe("MCP tools", () => {
       .prepare("SELECT name FROM app_servers WHERE id = ?")
       .get(appServerId) as { name: string };
 
-    const result = service.sendMessage({
+    const result = await service.sendMessage({
       appWorkspaceName: appServer.name,
       threadName: "Main",
       text: "Hello from MCP"
     });
 
-    expect(result).toMatchObject({ status: "queued" });
-
-    if (result.status !== "queued") {
-      throw new Error("Expected queued MCP send");
-    }
-
-    await waitFor(() => {
-      const row = app.database.sqlite
-        .prepare("SELECT status FROM messages WHERE id = ?")
-        .get(result.message_id) as { status: string } | undefined;
-      return row?.status === "completed";
-    });
+    expect(result).toEqual({ status: "sent" });
 
     const turnStart = readJsonLines(path.join(workspace, "requests.ndjson")).find(
       (request): request is { method: string; params: unknown } =>
@@ -98,11 +146,27 @@ describe("MCP tools", () => {
         (request as { method?: unknown }).method === "turn/start"
     );
     const queueItem = app.database.sqlite
-      .prepare("SELECT kind, status FROM queue_items WHERE id = ?")
-      .get(result.queue_item_id) as { kind: string; status: string };
+      .prepare(
+        `
+          SELECT kind, status
+          FROM queue_items
+          WHERE thread_id = ?
+          ORDER BY created_at DESC
+          LIMIT 1
+        `
+      )
+      .get(threadId) as { kind: string; status: string };
     const message = app.database.sqlite
-      .prepare("SELECT thread_id, status, parts_json FROM messages WHERE id = ?")
-      .get(result.message_id) as { thread_id: string; status: string; parts_json: string };
+      .prepare(
+        `
+          SELECT thread_id, status, parts_json
+          FROM messages
+          WHERE thread_id = ? AND role = 'user'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `
+      )
+      .get(threadId) as { thread_id: string; status: string; parts_json: string };
 
     expect(turnStart?.params).toEqual({
       threadId: "codex-thread-1",
@@ -126,9 +190,13 @@ describe("MCP tools", () => {
       app.threadStatusCache
     );
 
-    expect(
+    await expect(
       service.sendMessage({ appWorkspaceName: "missing", threadName: "Main", text: "hello" })
-    ).toEqual({ status: "error", error: "app_server_not_found" });
+    ).resolves.toEqual({
+      status: "failed",
+      code: "app_server_not_found",
+      error: "App workspace not found"
+    });
 
     const { appServerId } = await createStartedAppServer(
       app,
@@ -139,31 +207,43 @@ describe("MCP tools", () => {
       .prepare("SELECT name FROM app_servers WHERE id = ?")
       .get(appServerId) as { name: string };
 
-    expect(
+    await expect(
       service.sendMessage({
         appWorkspaceName: appServer.name,
         threadName: "Missing",
         text: "hello"
       })
-    ).toEqual({ status: "error", error: "thread_not_found" });
+    ).resolves.toEqual({
+      status: "failed",
+      code: "thread_not_found",
+      error: "Thread not found"
+    });
 
     insertCurrentThread(app, appServerId, {
       codexThreadId: "codex-thread-2",
       threadName: "Main"
     });
 
-    expect(
+    await expect(
       service.sendMessage({ appWorkspaceName: appServer.name, threadName: "Main", text: "hello" })
-    ).toEqual({ status: "error", error: "ambiguous_thread_name" });
+    ).resolves.toEqual({
+      status: "failed",
+      code: "ambiguous_thread_name",
+      error: "Thread name is ambiguous"
+    });
 
     app.database.sqlite
       .prepare("DELETE FROM threads WHERE codex_thread_id = ?")
       .run("codex-thread-2");
     await app.inject({ method: "POST", url: `/api/app-servers/${appServerId}/stop` });
 
-    expect(
+    await expect(
       service.sendMessage({ appWorkspaceName: appServer.name, threadName: "Main", text: "hello" })
-    ).toEqual({ status: "error", error: "app_server_offline" });
+    ).resolves.toEqual({
+      status: "failed",
+      code: "app_server_offline",
+      error: "App workspace is offline"
+    });
   });
 
   it("exposes the MCP tools over the backend /mcp endpoint", async () => {

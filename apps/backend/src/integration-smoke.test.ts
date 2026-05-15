@@ -171,16 +171,12 @@ describe("backend integration with fake Codex app-server", () => {
         })
       ]
     });
-    const mcpSend = mcp.sendMessage({
+    const mcpSend = await mcp.sendMessage({
       appWorkspaceName: appServerName,
       threadName: "Main",
       text: "Hello from MCP"
     });
-    expect(mcpSend).toMatchObject({ status: "queued" });
-    if (mcpSend.status !== "queued") {
-      throw new Error("Expected queued MCP send");
-    }
-    await waitForMessageStatus(app, mcpSend.message_id, "completed");
+    expect(mcpSend).toEqual({ status: "sent" });
 
     const copiedImagePath = path.join(workspace, ".agentmesh", "images", attachment.filename);
     const requests = readJsonLines(path.join(workspace, "requests.ndjson"));
@@ -251,7 +247,11 @@ describe("backend integration with fake Codex app-server", () => {
             })
           ]
         }),
-        expect.objectContaining({ id: mcpSend.message_id, status: "completed" })
+        expect.objectContaining({
+          role: "user",
+          status: "completed",
+          parts: [{ type: "markdown", text: "Hello from MCP" }]
+        })
       ])
     );
 

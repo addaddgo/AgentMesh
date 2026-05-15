@@ -16,14 +16,12 @@ export type McpWorkspaceThread = {
 
 export type McpSendMessageResult =
   | {
-      readonly status: "queued";
-      readonly message_id: string;
-      readonly turn_id: string;
-      readonly queue_item_id: string;
+      readonly status: "sent";
     }
   | {
-      readonly status: "error";
-      readonly error:
+      readonly status: "failed";
+      readonly error: string;
+      readonly code?:
         | "app_server_not_found"
         | "app_server_offline"
         | "thread_not_found"
@@ -59,7 +57,7 @@ export class AgentMeshMcpService {
     this.sends = new MessageSendService(database, config, events, appServerLifecycle, statusCache);
   }
 
-  public listWorkspaceThreads(): { readonly threads: McpWorkspaceThread[] } {
+  public listWorkspaceThreads(currentWorkspaceName?: string): { readonly threads: McpWorkspaceThread[] } {
     const appServers = this.database.sqlite
       .prepare(
         `
@@ -74,6 +72,10 @@ export class AgentMeshMcpService {
     const threads: McpWorkspaceThread[] = [];
 
     for (const appServer of appServers) {
+      if (currentWorkspaceName !== undefined && appServer.name === currentWorkspaceName) {
+        continue;
+      }
+
       for (const row of this.currentThreadsForAppServer(appServer.id)) {
         const status = this.statusCache.get(row.id) ?? "notLoaded";
         if (status === "notLoaded") {
@@ -90,19 +92,27 @@ export class AgentMeshMcpService {
     return { threads };
   }
 
-  public sendMessage(input: {
+  public async sendMessage(input: {
     readonly appWorkspaceName: string;
     readonly threadName: string;
     readonly text: string;
-  }): McpSendMessageResult {
+  }): Promise<McpSendMessageResult> {
     const appServer = this.findAppServerByName(input.appWorkspaceName);
 
     if (appServer === undefined) {
-      return { status: "error", error: "app_server_not_found" };
+      return {
+        status: "failed",
+        code: "app_server_not_found",
+        error: "App workspace not found"
+      };
     }
 
     if (appServer.status !== "online") {
-      return { status: "error", error: "app_server_offline" };
+      return {
+        status: "failed",
+        code: "app_server_offline",
+        error: "App workspace is offline"
+      };
     }
 
     const matchingThreads = this.currentThreadsForAppServer(appServer.id).filter((thread) => {
@@ -111,26 +121,32 @@ export class AgentMeshMcpService {
     });
 
     if (matchingThreads.length === 0) {
-      return { status: "error", error: "thread_not_found" };
+      return {
+        status: "failed",
+        code: "thread_not_found",
+        error: "Thread not found"
+      };
     }
 
     if (matchingThreads.length > 1) {
-      return { status: "error", error: "ambiguous_thread_name" };
+      return {
+        status: "failed",
+        code: "ambiguous_thread_name",
+        error: "Thread name is ambiguous"
+      };
     }
 
     const thread = matchingThreads[0];
     if (thread === undefined) {
-      return { status: "error", error: "thread_not_found" };
+      return {
+        status: "failed",
+        code: "thread_not_found",
+        error: "Thread not found"
+      };
     }
 
     const response = this.sends.sendText(thread.id, input.text, []);
-
-    return {
-      status: "queued",
-      message_id: response.message.id,
-      turn_id: response.turn.id,
-      queue_item_id: response.queueItem.id
-    };
+    return this.waitForSendResult(response.queueItem.id);
   }
 
   private findAppServerByName(name: string): AppServerRow | undefined {
@@ -157,6 +173,60 @@ export class AgentMeshMcpService {
       )
       .all(appServerId) as ThreadRow[];
   }
+
+  private async waitForSendResult(queueItemId: string): Promise<McpSendMessageResult> {
+    const deadline = Date.now() + SEND_POLL_TIMEOUT_MS;
+
+    while (Date.now() <= deadline) {
+      const row = this.database.sqlite
+        .prepare("SELECT status, error FROM queue_items WHERE id = ?")
+        .get(queueItemId) as QueueStatusRow | undefined;
+
+      if (row === undefined) {
+        return {
+          status: "failed",
+          error: "Queue item disappeared before completion"
+        };
+      }
+
+      if (row.status === "completed") {
+        return { status: "sent" };
+      }
+
+      if (row.status === "failed") {
+        return {
+          status: "failed",
+          error: row.error ?? "Message send failed"
+        };
+      }
+
+      if (row.status === "waiting_approval") {
+        return {
+          status: "failed",
+          error: "Message send is waiting for approval"
+        };
+      }
+
+      await sleep(SEND_POLL_INTERVAL_MS);
+    }
+
+    return {
+      status: "failed",
+      error: "Timed out waiting for message delivery"
+    };
+  }
+}
+
+const SEND_POLL_INTERVAL_MS = 150;
+const SEND_POLL_TIMEOUT_MS = 30_000;
+
+type QueueStatusRow = {
+  readonly status: string;
+  readonly error: string | null;
+};
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function createAgentMeshMcpServer(service: AgentMeshMcpService): McpServer {
@@ -168,9 +238,12 @@ export function createAgentMeshMcpServer(service: AgentMeshMcpService): McpServe
   server.registerTool(
     "list_workspace_threads",
     {
-      description: "List resumed threads for online AgentMesh workspaces."
+      description: "List resumed threads for online AgentMesh workspaces.",
+      inputSchema: {
+        current_workspace_name: z.string().min(1).optional()
+      }
     },
-    () => toolResult(service.listWorkspaceThreads())
+    ({ current_workspace_name }) => toolResult(service.listWorkspaceThreads(current_workspace_name))
   );
 
   server.registerTool(
@@ -183,9 +256,9 @@ export function createAgentMeshMcpServer(service: AgentMeshMcpService): McpServe
         text: z.string().min(1)
       }
     },
-    ({ app_workspace_name, thread_name, text }) =>
+    async ({ app_workspace_name, thread_name, text }) =>
       toolResult(
-        service.sendMessage({
+        await service.sendMessage({
           appWorkspaceName: app_workspace_name,
           threadName: thread_name,
           text

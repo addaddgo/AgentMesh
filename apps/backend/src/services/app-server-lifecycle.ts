@@ -22,6 +22,8 @@ type RegistryEntry = {
 
 const HEALTH_CHECK_INTERVAL_MS = 1_000;
 const HEALTH_CHECK_TIMEOUT_MS = 5_000;
+const CURRENT_WORKSPACE_ENV = "AGENTMESH_CURRENT_WORKSPACE";
+const LEGACY_CURRENT_WORKSPACE_ENV = "AGENTMES_CURRENT_WORKSPACE";
 
 export class AppServerLifecycleRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
@@ -65,7 +67,7 @@ export class AppServerLifecycleRegistry {
         ? CodexJsonRpcTransport.local({
             command: appServer.command,
             cwd: appServer.workspace,
-            env: { ...process.env, ...appServer.environment }
+            env: { ...process.env, ...runtimeEnvironment(appServer) }
           })
         : CodexJsonRpcTransport.ssh({
             host: appServer.host,
@@ -73,7 +75,7 @@ export class AppServerLifecycleRegistry {
             port: appServer.sshPort,
             workspace: appServer.workspace,
             command: appServer.command,
-            env: appServer.environment
+            env: runtimeEnvironment(appServer)
           });
 
     const entry: RegistryEntry = {
@@ -414,4 +416,14 @@ function formatExit(exit: CodexProcessExit): string {
   ].filter((value): value is string => value !== undefined);
 
   return details.length === 0 ? "" : ` (${details.join(", ")})`;
+}
+
+function runtimeEnvironment(
+  appServer: Pick<AppServerDto, "name" | "environment">
+): Readonly<Record<string, string>> {
+  return {
+    ...appServer.environment,
+    [CURRENT_WORKSPACE_ENV]: appServer.name,
+    [LEGACY_CURRENT_WORKSPACE_ENV]: appServer.name
+  };
 }

@@ -12,9 +12,6 @@ import { MessageSendService } from "./message-send.js";
 export type McpWorkspaceThread = {
   readonly app_workspace_name: string;
   readonly thread_name: string;
-  readonly thread_id: string;
-  readonly status: string;
-  readonly updated_time: string;
 };
 
 export type McpSendMessageResult =
@@ -85,10 +82,7 @@ export class AgentMeshMcpService {
 
         threads.push({
           app_workspace_name: appServer.name,
-          thread_name: row.thread_name,
-          thread_id: row.codex_thread_id,
-          status,
-          updated_time: new Date(row.updated_at).toISOString()
+          thread_name: row.thread_name
         });
       }
     }

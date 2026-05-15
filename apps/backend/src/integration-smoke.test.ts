@@ -167,8 +167,7 @@ describe("backend integration with fake Codex app-server", () => {
       threads: [
         expect.objectContaining({
           app_workspace_name: appServerName,
-          thread_name: "Main",
-          thread_id: "codex-thread-1"
+          thread_name: "Main"
         })
       ]
     });

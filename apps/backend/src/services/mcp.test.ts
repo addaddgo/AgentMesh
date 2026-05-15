@@ -45,9 +45,7 @@ describe("MCP tools", () => {
       threads: [
         {
           app_workspace_name: appServer.name,
-          thread_name: "Main",
-          thread_id: "codex-thread-1",
-          status: "idle"
+          thread_name: "Main"
         }
       ]
     });
@@ -230,9 +228,7 @@ describe("MCP tools", () => {
           threads: [
             {
               app_workspace_name: "agentmesh_test",
-              thread_name: "Main",
-              thread_id: "codex-thread-1",
-              status: "idle"
+              thread_name: "Main"
             }
           ]
         }

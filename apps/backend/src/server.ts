@@ -44,8 +44,11 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
   initializeDatabase(database);
   new AppServerService(database).markAllOfflineAfterBackendRestart();
 
-  // After restart, mark all in-flight messages, queue items, and approvals as failed
+  // After restart, mark all in-flight turns, messages, queue items, and approvals as failed
   const now = Date.now();
+  database.sqlite.prepare(
+    "UPDATE turns SET status = 'failed', completed_at = ?, error = COALESCE(error, 'Backend restarted'), updated_at = ? WHERE status IN ('queued', 'running', 'waiting_approval')"
+  ).run(now, now);
   database.sqlite.prepare(
     "UPDATE messages SET status = 'failed', updated_at = ? WHERE status IN ('pending', 'queued', 'sent', 'streaming')"
   ).run(now);

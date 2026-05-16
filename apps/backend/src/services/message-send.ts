@@ -14,7 +14,7 @@ import type { BackendConfig } from "../config.js";
 import type { DatabaseHandle } from "../db/index.js";
 import { NotFoundError, OfflineError, RequestValidationError } from "../errors.js";
 import type { AppServerLifecycleRegistry } from "./app-server-lifecycle.js";
-import type { JsonValue } from "./codex-json-rpc.js";
+import type { CodexProcessExit, JsonValue } from "./codex-json-rpc.js";
 import type { EventService } from "./events.js";
 import type { ThreadStatusCache } from "./thread-status-cache.js";
 import {
@@ -211,6 +211,18 @@ export class MessageSendService {
     const turnCompleted = new Promise<TurnCompletion>((resolve) => {
       finishTurn = resolve;
     });
+    let closedError: Error | null = null;
+    const unsubscribeProcessClose = transport.onProcessClose((exit) => {
+      if (closedError !== null) {
+        return;
+      }
+
+      closedError = new Error(formatTransportClosedMessage(exit));
+      finishTurn?.({
+        status: "failed",
+        error: closedError.message
+      });
+    });
     const unsubscribe = transport.onAnyNotification((_params, notification, rawLine) => {
       if (!notificationMatchesTurn(notification, payload.codexThreadId, codexTurnId)) {
         return;
@@ -245,6 +257,7 @@ export class MessageSendService {
         : await withTimeout(turnCompleted, 20 * 60_000);
 
       unsubscribe();
+      unsubscribeProcessClose();
 
       this.updateTurn(turn.id, {
         status: completion.status,
@@ -257,6 +270,7 @@ export class MessageSendService {
       return { result };
     } catch (error) {
       unsubscribe();
+      unsubscribeProcessClose();
       const messageText = error instanceof Error ? error.message : "Message send failed";
       this.updateTurn(turn.id, {
         status: "failed",
@@ -648,6 +662,22 @@ export class MessageSendService {
       collaborationMode: parseJsonValue(row.collaboration_mode_json)
     };
   }
+}
+
+function formatTransportClosedMessage(exit: CodexProcessExit): string {
+  let message = "Codex app-server closed before the turn completed";
+
+  if (exit.code !== null) {
+    message += ` (exit code ${exit.code})`;
+  } else if (exit.signal !== null) {
+    message += ` (signal ${exit.signal})`;
+  }
+
+  if (exit.stderr !== undefined && exit.stderr.length > 0) {
+    message += `: ${exit.stderr}`;
+  }
+
+  return message;
 }
 
 function withDefinedValues(input: Record<string, JsonValue | undefined>): JsonValue {

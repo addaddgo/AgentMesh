@@ -102,6 +102,7 @@ export class AppServerLifecycleRegistry {
     });
     transport.onAnyNotification((_params, notification, rawLine) => {
       try {
+        this.threadSync.handleNotification(id, notification);
         this.approvals.handleNotification(id, notification, rawLine);
       } catch (error) {
         this.recordApprovalHandlingError(id, error);
@@ -230,8 +231,11 @@ export class AppServerLifecycleRegistry {
       `Codex app-server exited${formatExit(exit)}`
     );
 
-    // Mark in-flight messages and queue items as failed
+    // Mark in-flight turns, messages, and queue items as failed
     const now = Date.now();
+    this.database.sqlite.prepare(
+      "UPDATE turns SET status = 'failed', completed_at = ?, error = COALESCE(error, ?), updated_at = ? WHERE app_server_id = ? AND status IN ('queued', 'running', 'waiting_approval')"
+    ).run(now, `Codex app-server exited${formatExit(exit)}`, now, entry.appServerId);
     this.database.sqlite.prepare(
       "UPDATE messages SET status = 'failed', updated_at = ? WHERE app_server_id = ? AND status IN ('pending', 'queued', 'sent', 'streaming')"
     ).run(now, entry.appServerId);

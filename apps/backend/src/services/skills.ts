@@ -269,7 +269,6 @@ function copySkillToLocal(sourcePath: string, workspace: string, skillName: stri
 
 function copySkillToRemote(sourcePath: string, target: SkillCopyTarget, skillName: string): string {
   const destination = targetSkillPath(target.workspace, skillName);
-  const parent = path.posix.dirname(destination);
   const sshTarget = remoteTarget(target);
   const sshArgs = [
     "-o",
@@ -278,7 +277,7 @@ function copySkillToRemote(sourcePath: string, target: SkillCopyTarget, skillNam
     "ConnectTimeout=10",
     ...(target.sshPort === null ? [] : ["-p", String(target.sshPort)]),
     sshTarget,
-    `rm -rf ${shellQuote(destination)} && mkdir -p ${shellQuote(parent)}`
+    `rm -rf ${shellQuote(destination)} && mkdir -p ${shellQuote(destination)}`
   ];
   const scpArgs = [
     "-o",
@@ -287,8 +286,8 @@ function copySkillToRemote(sourcePath: string, target: SkillCopyTarget, skillNam
     "ConnectTimeout=10",
     ...(target.sshPort === null ? [] : ["-P", String(target.sshPort)]),
     "-r",
-    sourcePath,
-    `${sshTarget}:${shellQuote(destination)}`
+    `${sourcePath}${path.sep}.`,
+    `${sshTarget}:${escapeScpRemotePath(destination)}/`
   ];
 
   runRemoteCommand("ssh", sshArgs);
@@ -516,6 +515,10 @@ function isPathInside(root: string, child: string): boolean {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function escapeScpRemotePath(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll(" ", "\\ ").replaceAll(":", "\\:");
 }
 
 function isNotFound(error: unknown): boolean {

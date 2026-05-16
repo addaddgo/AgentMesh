@@ -4,7 +4,7 @@ import type { ThreadDto, ThreadRuntimeDto } from "@agentmesh/shared";
 
 import type { DatabaseHandle } from "../db/index.js";
 import { NotFoundError, ProtocolError } from "../errors.js";
-import type { JsonValue } from "./codex-json-rpc.js";
+import { CodexJsonRpcRemoteError, type JsonRpcNotification, type JsonValue } from "./codex-json-rpc.js";
 import type { EventService } from "./events.js";
 import { ThreadStatusCache } from "./thread-status-cache.js";
 import { buildThreadRuntime } from "./thread-runtime.js";
@@ -136,10 +136,11 @@ export class ThreadSyncService {
     const workspace = this.getAppServerWorkspace(appServerId);
 
     const codexThreads = await this.fetchCodexThreads(requester, workspace);
+    const loadedThreadIds = await this.fetchLoadedThreadIds(requester);
     const before = this.currentFingerprint(appServerId);
     const seenCodexIds = this.upsertThreads(appServerId, codexThreads);
     this.markMissingGone(appServerId, seenCodexIds);
-    this.syncStatusesFromCodexThreads(appServerId, codexThreads);
+    this.syncStatusesFromCodexThreads(appServerId, codexThreads, loadedThreadIds);
     const threads = this.listCurrent(appServerId);
     const changed = before !== this.currentFingerprint(appServerId);
 
@@ -187,6 +188,28 @@ export class ThreadSyncService {
     });
 
     return dto;
+  }
+
+  public handleNotification(appServerId: string, notification: JsonRpcNotification): void {
+    const statusChange = parseThreadStatusChanged(notification);
+    if (statusChange === null) {
+      return;
+    }
+
+    const row = this.findByCodexThreadIdRow(appServerId, statusChange.codexThreadId);
+    if (row === undefined) {
+      return;
+    }
+
+    this.statusCache.set(row.id, statusChange.status);
+    this.events.publish({
+      type: "thread.list_changed",
+      appServerId,
+      payload: {
+        threads: this.listCurrent(appServerId),
+        changed: true
+      }
+    });
   }
 
   public async resumeThread(
@@ -248,6 +271,18 @@ export class ThreadSyncService {
     }
 
     throw new ProtocolError("Codex thread/list pagination exceeded the page limit");
+  }
+
+  private async fetchLoadedThreadIds(requester: CodexRequester): Promise<Set<string> | null> {
+    try {
+      const result = await requester.request("thread/loaded/list");
+      return extractLoadedThreadIds(result);
+    } catch (error) {
+      if (error instanceof CodexJsonRpcRemoteError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   private upsertThreads(appServerId: string, codexThreads: readonly CodexThread[]): Set<string> {
@@ -432,7 +467,8 @@ export class ThreadSyncService {
 
   private syncStatusesFromCodexThreads(
     appServerId: string,
-    codexThreads: readonly CodexThread[]
+    codexThreads: readonly CodexThread[],
+    loadedThreadIds: ReadonlySet<string> | null
   ): void {
     const rows = this.database.sqlite
       .prepare(
@@ -450,7 +486,13 @@ export class ThreadSyncService {
       codexThreads.map((thread) => [thread.codexThreadId, thread.status ?? "idle"] as const)
     );
     this.statusCache.setMany(
-      rows.map((row) => [row.id, statusByCodexThreadId.get(row.codex_thread_id) ?? "idle"] as const)
+      rows.map((row) => {
+        if (loadedThreadIds !== null && !loadedThreadIds.has(row.codex_thread_id)) {
+          return [row.id, "notLoaded"] as const;
+        }
+
+        return [row.id, statusByCodexThreadId.get(row.codex_thread_id) ?? "idle"] as const;
+      })
     );
   }
 
@@ -623,14 +665,69 @@ function readNestedString(value: unknown, path: readonly string[]): string | und
 
 function readThreadStatus(value: Record<string, JsonValue>): string | null {
   if (typeof value.status === "string") {
-    return value.status;
+    return normalizeThreadStatus(value.status);
   }
 
   if (isRecord(value.status)) {
-    return firstString(value.status.type, value.status.status) ?? null;
+    return normalizeThreadStatus(firstString(value.status.type, value.status.status) ?? null);
   }
 
   return null;
+}
+
+function normalizeThreadStatus(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  switch (value) {
+    case "active":
+      return "working";
+    case "idle":
+    case "notLoaded":
+    case "working":
+    case "systemError":
+      return value;
+    default:
+      return value;
+  }
+}
+
+function extractLoadedThreadIds(result: JsonValue): Set<string> {
+  if (!isRecord(result)) {
+    throw new ProtocolError("Codex thread/loaded/list returned an invalid response");
+  }
+
+  const rawItems = result.data ?? result.threads ?? result.threadIds ?? result.thread_ids;
+  if (!Array.isArray(rawItems)) {
+    throw new ProtocolError("Codex thread/loaded/list did not include a thread id array");
+  }
+
+  const ids = new Set<string>();
+  for (const item of rawItems) {
+    if (typeof item !== "string" || item.trim().length === 0) {
+      throw new ProtocolError("Codex thread/loaded/list returned an invalid thread id");
+    }
+    ids.add(item);
+  }
+
+  return ids;
+}
+
+function parseThreadStatusChanged(
+  notification: JsonRpcNotification
+): { readonly codexThreadId: string; readonly status: string } | null {
+  if (notification.method !== "thread/status/changed" || !isRecord(notification.params)) {
+    return null;
+  }
+
+  const codexThreadId = firstString(notification.params.threadId, notification.params.thread_id);
+  const status = readThreadStatus(notification.params);
+  if (codexThreadId === undefined || status === null) {
+    return null;
+  }
+
+  return { codexThreadId, status };
 }
 
 function extractStartedThread(result: JsonValue): JsonValue {

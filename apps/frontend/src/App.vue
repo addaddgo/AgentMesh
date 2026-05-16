@@ -35,16 +35,19 @@ import { onMounted, watch } from "vue";
 import { RouterLink, RouterView } from "vue-router";
 
 import { requestBrowserNotificationPermission } from "./services/notifications";
+import { useNotificationPreferencesStore } from "./stores/notificationPreferences";
 import { useRealtimeStore } from "./stores/realtime";
 import { useThemeStore } from "./stores/theme";
 import { useTodoStore } from "./stores/todos";
 import { useUiLayoutStore } from "./stores/uiLayout";
 
+const notificationPreferences = useNotificationPreferencesStore();
 const realtime = useRealtimeStore();
 const theme = useThemeStore();
 const todos = useTodoStore();
 const uiLayout = useUiLayoutStore();
 
+notificationPreferences.loadPersistedPreferences();
 theme.loadPersistedTheme();
 
 watch(
@@ -56,7 +59,9 @@ watch(
 
 onMounted(() => {
   void uiLayout.loadPersistedState();
-  void requestBrowserNotificationPermission();
+  if (notificationPreferences.browserEnabled) {
+    void requestBrowserNotificationPermission();
+  }
   void todos.ensureDeadlineWatcher();
   realtime.start();
 });

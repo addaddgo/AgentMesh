@@ -883,6 +883,67 @@ describe("app-server configuration API", () => {
     });
   });
 
+  it("uses thread/loaded/list to clear stale active thread status after restart", async () => {
+    const { app, tempDir } = await setup();
+    const workspace = path.join(tempDir, "workspace");
+    const scriptPath = createFakeCodexScript(tempDir, {
+      threadListPages: [
+        {
+          threads: [{ id: "thr-main", name: "main", status: { type: "active" } }]
+        }
+      ],
+      loadedThreadIds: ["thr-main"]
+    });
+    fs.mkdirSync(workspace);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/app-servers",
+      payload: {
+        hostKind: "local",
+        workspace,
+        command: `${process.execPath} ${scriptPath}`
+      }
+    });
+    const id = created.json<{ id: string }>().id;
+
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/api/app-servers/${id}/start`
+        })
+      ).statusCode
+    ).toBe(200);
+
+    const onlineThreads = await app.inject({
+      method: "GET",
+      url: `/api/app-servers/${id}/threads`
+    });
+    expect(onlineThreads.json()).toMatchObject({
+      threads: [{ threadName: "main", status: "working" }]
+    });
+
+    fs.writeFileSync(path.join(workspace, "thread-loaded-ids.json"), JSON.stringify([], null, 2));
+
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/api/app-servers/${id}/restart`
+        })
+      ).statusCode
+    ).toBe(200);
+
+    const restartedThreads = await app.inject({
+      method: "GET",
+      url: `/api/app-servers/${id}/threads`
+    });
+    expect(restartedThreads.json()).toMatchObject({
+      threads: [{ threadName: "main", status: "notLoaded" }]
+    });
+  });
+
   it("creates a main thread automatically when an app server starts with no workspace threads", async () => {
     const { app, tempDir } = await setup();
     const workspace = path.join(tempDir, "workspace");
@@ -1173,6 +1234,7 @@ function createFakeCodexScript(
   options: {
     readonly exitAfterInitialize?: boolean;
     readonly threadListPages?: readonly unknown[];
+    readonly loadedThreadIds?: readonly string[];
   } = {}
 ): string {
   const scriptPath = path.join(tempDir, `fake-codex-${Math.random().toString(16).slice(2)}.mjs`);
@@ -1188,6 +1250,7 @@ function createFakeCodexScript(
       const countPath = path.join(process.cwd(), "initialize-count.txt");
       const requestsPath = path.join(process.cwd(), "requests.ndjson");
       const defaultThreadListPages = ${JSON.stringify(options.threadListPages ?? [{ threads: [] }])};
+      const defaultLoadedThreadIds = ${JSON.stringify(options.loadedThreadIds ?? [])};
 
       function threadListPages() {
         const dynamicPath = path.join(process.cwd(), "thread-list-pages.json");
@@ -1196,6 +1259,15 @@ function createFakeCodexScript(
         }
 
         return defaultThreadListPages;
+      }
+
+      function loadedThreadIds() {
+        const dynamicPath = path.join(process.cwd(), "thread-loaded-ids.json");
+        if (fs.existsSync(dynamicPath)) {
+          return JSON.parse(fs.readFileSync(dynamicPath, "utf8"));
+        }
+
+        return defaultLoadedThreadIds;
       }
 
       for await (const line of lines) {
@@ -1231,6 +1303,12 @@ function createFakeCodexScript(
             jsonrpc: "2.0",
             id: request.id,
             result: pages[pageIndex] ?? { threads: [] }
+          }) + "\\n");
+        } else if (request.method === "thread/loaded/list") {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { data: loadedThreadIds() }
           }) + "\\n");
         } else if (request.method === "thread/start") {
           process.stdout.write(JSON.stringify({

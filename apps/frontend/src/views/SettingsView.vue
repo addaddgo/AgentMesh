@@ -2,7 +2,7 @@
   <section class="content-page app-server-page">
     <header class="page-header">
       <div>
-        <h1>App Servers Configuration</h1>
+        <h1>Settings</h1>
       </div>
       <div class="settings-header-actions">
         <div class="theme-switcher">
@@ -20,251 +20,307 @@
       </div>
     </header>
 
-    <div class="app-server-layout">
-      <aside class="server-list-panel">
-        <div class="sidebar-title">
-          <strong>Configured</strong>
-          <el-button
-            size="small"
-            type="primary"
-            :icon="Plus"
-            circle
-            title="New app-server"
-            aria-label="New app-server"
-            @click="newServer"
-          />
-        </div>
-
-        <el-empty
-          v-if="appServers.appServers.length === 0"
-          description="No app servers configured"
-        />
-        <button
-          v-for="server in appServers.appServers"
-          v-else
-          :key="server.id"
-          class="server-card"
-          :class="{ active: server.id === editingId }"
-          type="button"
-          @click="editServer(server)"
-        >
-          <span class="server-name">{{ appServerLabel(server) }}</span>
-          <el-tag :type="statusTagType(server.status)" size="small">{{ server.status }}</el-tag>
-          <small>{{ server.hostKind }}</small>
-        </button>
-      </aside>
-
-      <main class="server-editor">
-        <header class="editor-header">
+    <div class="settings-stack">
+      <section class="settings-section">
+        <header class="settings-section-header">
           <div>
-            <p class="eyebrow">{{ editingServer === null ? "Create" : "Edit" }}</p>
-            <h2>{{ editingServer === null ? "New app server" : appServerLabel(editingServer) }}</h2>
+            <p class="eyebrow">Global</p>
+            <h2>Notifications</h2>
           </div>
-          <el-tag v-if="editingServer !== null" :type="statusTagType(editingServer.status)">
-            {{ editingServer.status }}
-          </el-tag>
         </header>
-        <div class="server-editor-scroll">
-          <el-alert
-            v-if="editingServer?.lastError"
-            class="last-error"
-            :title="editingServer.lastError"
-            type="error"
-            show-icon
-            :closable="false"
-          />
-
-          <div v-if="form.name.trim().length === 0" class="generated-name">
-            <span>Generated app-server name</span>
-            <strong>{{ generatedName }}</strong>
+        <div class="notification-settings-card">
+          <div class="notification-settings-copy">
+            <strong>Browser Notifications</strong>
+            <small>
+              Chrome alerts are muted while this page is in the foreground when suppression is
+              enabled.
+            </small>
           </div>
-
-          <el-form
-            class="server-form detailed"
-            label-position="top"
-            :model="form"
-            @submit.prevent="save"
-          >
-            <el-form-item label="Name" :error="fieldError('name')">
-              <el-input v-model="form.name" placeholder="Leave empty to generate from workspace" />
-            </el-form-item>
-
-            <div class="form-grid">
-              <el-form-item label="Host type">
-                <el-segmented v-model="form.hostKind" :options="hostKindOptions" />
-              </el-form-item>
-              <el-form-item label="Command" :error="fieldError('command')">
-                <el-input v-model="form.command" placeholder="codex app-server" />
-              </el-form-item>
+          <div class="notification-settings-controls">
+            <div class="notification-setting-row">
+              <span>Enable</span>
+              <el-switch
+                :model-value="notificationPreferences.browserEnabled"
+                @change="toggleBrowserNotifications"
+              />
             </div>
-
-            <el-form-item label="Workspace" :error="fieldError('workspace')">
-              <el-input v-model="form.workspace" placeholder="/absolute/path/to/workspace" />
-            </el-form-item>
-
-            <el-form-item label="VS Code Path" :error="fieldError('vscodePath')">
-              <el-input
-                v-model="form.vscodePath"
-                placeholder="Optional. Defaults to code"
+            <div class="notification-setting-row">
+              <span>Mute in foreground</span>
+              <el-switch
+                :model-value="notificationPreferences.suppressWhenForeground"
+                :disabled="!notificationPreferences.browserEnabled"
+                @change="toggleForegroundSuppression"
               />
-            </el-form-item>
-
-            <el-form-item label="Environment" :error="fieldError('environment')">
-              <el-input
-                v-model="form.environmentText"
-                type="textarea"
-                :rows="5"
-                placeholder="OPENAI_API_KEY=...\nHTTPS_PROXY=http://127.0.0.1:7890"
-              />
-            </el-form-item>
-
-            <section class="observation-stack-settings">
-              <div class="sidebar-title">
-                <strong>Observation Stack</strong>
-              </div>
-              <p class="observation-intro">
-                Define the first-message harness prompt and the skill stack Codex should treat as
-                workspace observation infrastructure.
-              </p>
-              <el-form-item
-                label="Observation Prompt"
-                :error="fieldError('observationPrompt')"
-              >
-                <el-input
-                  v-model="form.observationPrompt"
-                  type="textarea"
-                  :rows="6"
-                  :placeholder="defaultObservationPrompt"
-                />
-              </el-form-item>
-              <p class="settings-help">
-                Leave this empty to use the default workspace observation-stack prompt.
-              </p>
-              <el-form-item
-                label="Active Observation Skills"
-                :error="fieldError('activeObservationSkillNames')"
-              >
-                <p v-if="availableSkillsLoading" class="observation-skill-loading">
-                  Refreshing workspace skills…
-                </p>
-                <el-checkbox-group v-model="form.activeObservationSkillNames">
-                  <div v-if="availableSkills.length > 0" class="observation-skill-flow">
-                    <label
-                      v-for="skill in availableSkills"
-                      :key="skill.path"
-                      class="observation-skill-card"
-                    >
-                      <el-checkbox :value="skill.name">
-                        <span class="observation-skill-name">${{ skill.name }}</span>
-                      </el-checkbox>
-                      <small>{{ skill.description }}</small>
-                    </label>
-                  </div>
-                  <div v-else class="observation-skill-empty">
-                    No installed workspace skills found for this app-server yet.
-                  </div>
-                </el-checkbox-group>
-              </el-form-item>
-            </section>
-
-            <div v-if="form.hostKind === 'ssh'" class="form-grid">
-              <el-form-item label="SSH host" :error="fieldError('host')">
-                <el-input v-model="form.host" placeholder="buildbox.example.com" />
-              </el-form-item>
-              <el-form-item label="SSH user" :error="fieldError('sshUser')">
-                <el-input v-model="form.sshUser" placeholder="Optional user" />
-              </el-form-item>
-              <el-form-item label="SSH port" :error="fieldError('sshPort')">
-                <el-input-number
-                  v-model="form.sshPort"
-                  :min="1"
-                  :max="65535"
-                  controls-position="right"
-                />
-              </el-form-item>
             </div>
-
-            <el-alert
-              v-if="formError !== null"
-              :title="formError"
-              type="error"
-              show-icon
-              :closable="false"
-            />
-
-            <div class="form-actions">
+            <div class="notification-permission-row">
+              <span>Permission: {{ browserPermissionLabel }}</span>
               <el-button
-                type="primary"
-                :icon="editingServer === null ? CirclePlus : Select"
-                native-type="submit"
-                :loading="saving"
-                :disabled="form.workspace.trim().length === 0"
-                circle
-                :title="editingServer === null ? 'Create app-server' : 'Save changes'"
-                :aria-label="editingServer === null ? 'Create app-server' : 'Save changes'"
-              />
-              <el-button
-                :icon="RefreshLeft"
-                circle
-                title="Reset"
-                aria-label="Reset"
-                @click="resetForm"
-              />
-              <el-button
-                v-if="editingServer !== null"
-                type="danger"
-                :disabled="saving || deleting"
-                :loading="deleting"
-                plain
-                @click="deleteWorkspace"
+                v-if="showBrowserPermissionButton"
+                size="small"
+                @click="requestBrowserNotifications"
               >
-                Delete Workspace
+                Request
               </el-button>
             </div>
-          </el-form>
-
-          <section v-if="editingServer !== null" class="lifecycle-panel">
-            <div>
-              <p class="eyebrow">Lifecycle</p>
-              <h3>{{ appServerLabel(editingServer) }}</h3>
-              <p>
-                {{ editingServer.hostKind }} · {{ editingServer.command }}
-              </p>
-            </div>
-            <div class="lifecycle-actions">
-              <el-button
-                type="success"
-                :icon="VideoPlay"
-                :loading="runningAction === 'start'"
-                :disabled="isBusy(editingServer.status) || editingServer.status === 'online'"
-                circle
-                title="Start"
-                aria-label="Start"
-                @click="runLifecycle('start')"
-              />
-              <el-button
-                type="warning"
-                :icon="VideoPause"
-                :loading="runningAction === 'stop'"
-                :disabled="isBusy(editingServer.status) || editingServer.status === 'offline'"
-                circle
-                title="Stop"
-                aria-label="Stop"
-                @click="runLifecycle('stop')"
-              />
-              <el-button
-                :icon="RefreshRight"
-                :loading="runningAction === 'restart'"
-                :disabled="isBusy(editingServer.status)"
-                circle
-                title="Restart"
-                aria-label="Restart"
-                @click="runLifecycle('restart')"
-              />
-            </div>
-          </section>
+          </div>
         </div>
-      </main>
+      </section>
+
+      <section class="settings-section">
+        <header class="settings-section-header">
+          <div>
+            <p class="eyebrow">Workspace Runtime</p>
+            <h2>App Servers Configuration</h2>
+          </div>
+        </header>
+
+        <div class="app-server-layout">
+          <aside class="server-list-panel">
+            <div class="sidebar-title">
+              <strong>Configured</strong>
+              <el-button
+                size="small"
+                type="primary"
+                :icon="Plus"
+                circle
+                title="New app-server"
+                aria-label="New app-server"
+                @click="newServer"
+              />
+            </div>
+
+            <el-empty
+              v-if="appServers.appServers.length === 0"
+              description="No app servers configured"
+            />
+            <button
+              v-for="server in appServers.appServers"
+              v-else
+              :key="server.id"
+              class="server-card"
+              :class="{ active: server.id === editingId }"
+              type="button"
+              @click="editServer(server)"
+            >
+              <span class="server-name">{{ appServerLabel(server) }}</span>
+              <el-tag :type="statusTagType(server.status)" size="small">{{ server.status }}</el-tag>
+              <small>{{ server.hostKind }}</small>
+            </button>
+          </aside>
+
+          <main class="server-editor">
+            <header class="editor-header">
+              <div>
+                <p class="eyebrow">{{ editingServer === null ? "Create" : "Edit" }}</p>
+                <h2>{{ editingServer === null ? "New app server" : appServerLabel(editingServer) }}</h2>
+              </div>
+              <el-tag v-if="editingServer !== null" :type="statusTagType(editingServer.status)">
+                {{ editingServer.status }}
+              </el-tag>
+            </header>
+            <div class="server-editor-scroll">
+              <el-alert
+                v-if="editingServer?.lastError"
+                class="last-error"
+                :title="editingServer.lastError"
+                type="error"
+                show-icon
+                :closable="false"
+              />
+
+              <div v-if="form.name.trim().length === 0" class="generated-name">
+                <span>Generated app-server name</span>
+                <strong>{{ generatedName }}</strong>
+              </div>
+
+              <el-form
+                class="server-form detailed"
+                label-position="top"
+                :model="form"
+                @submit.prevent="save"
+              >
+                <el-form-item label="Name" :error="fieldError('name')">
+                  <el-input v-model="form.name" placeholder="Leave empty to generate from workspace" />
+                </el-form-item>
+
+                <div class="form-grid">
+                  <el-form-item label="Host type">
+                    <el-segmented v-model="form.hostKind" :options="hostKindOptions" />
+                  </el-form-item>
+                  <el-form-item label="Command" :error="fieldError('command')">
+                    <el-input v-model="form.command" placeholder="codex app-server" />
+                  </el-form-item>
+                </div>
+
+                <el-form-item label="Workspace" :error="fieldError('workspace')">
+                  <el-input v-model="form.workspace" placeholder="/absolute/path/to/workspace" />
+                </el-form-item>
+
+                <el-form-item label="VS Code Path" :error="fieldError('vscodePath')">
+                  <el-input
+                    v-model="form.vscodePath"
+                    placeholder="Optional. Defaults to code"
+                  />
+                </el-form-item>
+
+                <el-form-item label="Environment" :error="fieldError('environment')">
+                  <el-input
+                    v-model="form.environmentText"
+                    type="textarea"
+                    :rows="5"
+                    placeholder="OPENAI_API_KEY=...\nHTTPS_PROXY=http://127.0.0.1:7890"
+                  />
+                </el-form-item>
+
+                <section class="observation-stack-settings">
+                  <div class="sidebar-title">
+                    <strong>Observation Stack</strong>
+                  </div>
+                  <p class="observation-intro">
+                    Define the first-message harness prompt and the skill stack Codex should treat as
+                    workspace observation infrastructure.
+                  </p>
+                  <el-form-item
+                    label="Observation Prompt"
+                    :error="fieldError('observationPrompt')"
+                  >
+                    <el-input
+                      v-model="form.observationPrompt"
+                      type="textarea"
+                      :rows="6"
+                      :placeholder="defaultObservationPrompt"
+                    />
+                  </el-form-item>
+                  <p class="settings-help">
+                    Leave this empty to use the default workspace observation-stack prompt.
+                  </p>
+                  <el-form-item
+                    label="Active Observation Skills"
+                    :error="fieldError('activeObservationSkillNames')"
+                  >
+                    <p v-if="availableSkillsLoading" class="observation-skill-loading">
+                      Refreshing workspace skills…
+                    </p>
+                    <el-checkbox-group v-model="form.activeObservationSkillNames">
+                      <div v-if="availableSkills.length > 0" class="observation-skill-flow">
+                        <label
+                          v-for="skill in availableSkills"
+                          :key="skill.path"
+                          class="observation-skill-card"
+                        >
+                          <el-checkbox :value="skill.name">
+                            <span class="observation-skill-name">${{ skill.name }}</span>
+                          </el-checkbox>
+                          <small>{{ skill.description }}</small>
+                        </label>
+                      </div>
+                      <div v-else class="observation-skill-empty">
+                        No installed workspace skills found for this app-server yet.
+                      </div>
+                    </el-checkbox-group>
+                  </el-form-item>
+                </section>
+
+                <div v-if="form.hostKind === 'ssh'" class="form-grid">
+                  <el-form-item label="SSH host" :error="fieldError('host')">
+                    <el-input v-model="form.host" placeholder="buildbox.example.com" />
+                  </el-form-item>
+                  <el-form-item label="SSH user" :error="fieldError('sshUser')">
+                    <el-input v-model="form.sshUser" placeholder="Optional user" />
+                  </el-form-item>
+                  <el-form-item label="SSH port" :error="fieldError('sshPort')">
+                    <el-input-number
+                      v-model="form.sshPort"
+                      :min="1"
+                      :max="65535"
+                      controls-position="right"
+                    />
+                  </el-form-item>
+                </div>
+
+                <el-alert
+                  v-if="formError !== null"
+                  :title="formError"
+                  type="error"
+                  show-icon
+                  :closable="false"
+                />
+
+                <div class="form-actions">
+                  <el-button
+                    type="primary"
+                    :icon="editingServer === null ? CirclePlus : Select"
+                    native-type="submit"
+                    :loading="saving"
+                    :disabled="form.workspace.trim().length === 0"
+                    circle
+                    :title="editingServer === null ? 'Create app-server' : 'Save changes'"
+                    :aria-label="editingServer === null ? 'Create app-server' : 'Save changes'"
+                  />
+                  <el-button
+                    :icon="RefreshLeft"
+                    circle
+                    title="Reset"
+                    aria-label="Reset"
+                    @click="resetForm"
+                  />
+                  <el-button
+                    v-if="editingServer !== null"
+                    type="danger"
+                    :disabled="saving || deleting"
+                    :loading="deleting"
+                    plain
+                    @click="deleteWorkspace"
+                  >
+                    Delete Workspace
+                  </el-button>
+                </div>
+              </el-form>
+
+              <section v-if="editingServer !== null" class="lifecycle-panel">
+                <div>
+                  <p class="eyebrow">Lifecycle</p>
+                  <h3>{{ appServerLabel(editingServer) }}</h3>
+                  <p>
+                    {{ editingServer.hostKind }} · {{ editingServer.command }}
+                  </p>
+                </div>
+                <div class="lifecycle-actions">
+                  <el-button
+                    type="success"
+                    :icon="VideoPlay"
+                    :loading="runningAction === 'start'"
+                    :disabled="isBusy(editingServer.status) || editingServer.status === 'online'"
+                    circle
+                    title="Start"
+                    aria-label="Start"
+                    @click="runLifecycle('start')"
+                  />
+                  <el-button
+                    type="warning"
+                    :icon="VideoPause"
+                    :loading="runningAction === 'stop'"
+                    :disabled="isBusy(editingServer.status) || editingServer.status === 'offline'"
+                    circle
+                    title="Stop"
+                    aria-label="Stop"
+                    @click="runLifecycle('stop')"
+                  />
+                  <el-button
+                    :icon="RefreshRight"
+                    :loading="runningAction === 'restart'"
+                    :disabled="isBusy(editingServer.status)"
+                    circle
+                    title="Restart"
+                    aria-label="Restart"
+                    @click="runLifecycle('restart')"
+                  />
+                </div>
+              </section>
+            </div>
+          </main>
+        </div>
+      </section>
     </div>
   </section>
 </template>
@@ -285,8 +341,13 @@ import type { ApiErrorDetail, AppServerDto, AppServerStatus, TargetSkillDto } fr
 import { computed, onMounted, reactive, ref } from "vue";
 
 import { apiClient, ApiClientError, type CreateAppServerPayload } from "../api/client";
+import {
+  browserNotificationPermission,
+  requestBrowserNotificationPermission
+} from "../services/notifications";
 import { notifyError } from "../stores/errors";
 import { useAppServerStore } from "../stores/appServers";
+import { useNotificationPreferencesStore } from "../stores/notificationPreferences";
 import { useThemeStore, type ThemeMode } from "../stores/theme";
 
 type AppServerForm = {
@@ -313,6 +374,7 @@ const themeOptions = [
 ] as const;
 
 const appServers = useAppServerStore();
+const notificationPreferences = useNotificationPreferencesStore();
 const theme = useThemeStore();
 const editingId = ref<string | null>(null);
 const saving = ref(false);
@@ -337,9 +399,32 @@ const selectedTheme = computed<ThemeMode>({
     theme.setTheme(value);
   }
 });
+const browserPermission = ref<NotificationPermission | "unsupported">(
+  browserNotificationPermission()
+);
+const browserPermissionLabel = computed(() => {
+  if (browserPermission.value === "unsupported") {
+    return "unsupported";
+  }
+  if (browserPermission.value === "granted") {
+    return "granted";
+  }
+  if (browserPermission.value === "denied") {
+    return "denied";
+  }
+  return "default";
+});
+const showBrowserPermissionButton = computed(
+  () =>
+    notificationPreferences.browserEnabled &&
+    browserPermission.value !== "unsupported" &&
+    browserPermission.value !== "granted"
+);
 
 onMounted(() => {
   void appServers.load();
+  notificationPreferences.loadPersistedPreferences();
+  browserPermission.value = browserNotificationPermission();
 });
 
 function emptyForm(): AppServerForm {
@@ -423,6 +508,24 @@ async function loadSkills(appServerId: string): Promise<void> {
   } finally {
     availableSkillsLoading.value = false;
   }
+}
+
+async function requestBrowserNotifications(): Promise<void> {
+  browserPermission.value = await requestBrowserNotificationPermission();
+}
+
+async function toggleBrowserNotifications(value: boolean | string | number): Promise<void> {
+  const enabled = Boolean(value);
+  notificationPreferences.setBrowserEnabled(enabled);
+  if (enabled) {
+    browserPermission.value = await requestBrowserNotificationPermission();
+    return;
+  }
+  browserPermission.value = browserNotificationPermission();
+}
+
+function toggleForegroundSuppression(value: boolean | string | number): void {
+  notificationPreferences.setSuppressWhenForeground(Boolean(value));
 }
 
 function toPayload(): CreateAppServerPayload {
@@ -634,6 +737,32 @@ function buildDefaultObservationPrompt(activeObservationSkillNames: readonly str
 </script>
 
 <style scoped>
+.settings-stack {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.settings-section {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  border: 1px solid #485260;
+  border-radius: 1.1rem;
+  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+  box-shadow: 0 18px 38px color-mix(in srgb, var(--shadow-panel) 42%, transparent);
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.settings-section-header h2 {
+  margin: 0.2rem 0 0;
+}
+
 .server-editor {
   display: grid;
   align-content: start;
@@ -712,5 +841,51 @@ function buildDefaultObservationPrompt(activeObservationSkillNames: readonly str
 
 .observation-skill-name {
   font-weight: 700;
+}
+
+.notification-settings-card {
+  display: grid;
+  grid-template-columns: minmax(17rem, 24rem) auto;
+  gap: 1rem;
+  align-items: start;
+  padding: 1rem 1.05rem;
+  border: 1px solid #485260;
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--bg-panel-elevated) 78%, transparent);
+}
+
+.notification-settings-copy {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.notification-settings-copy small {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.notification-settings-controls {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 15rem;
+}
+
+.notification-setting-row,
+.notification-permission-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+}
+
+.notification-permission-row {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+}
+
+@media (max-width: 980px) {
+  .notification-settings-card {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

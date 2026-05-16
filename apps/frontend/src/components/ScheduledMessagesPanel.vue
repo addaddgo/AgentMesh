@@ -104,133 +104,164 @@
       <div v-if="store.loading && store.items.length === 0" class="scheduled-messages-empty">Loading...</div>
       <div v-else-if="store.items.length === 0" class="scheduled-messages-empty">No scheduled messages yet.</div>
       <div v-else class="scheduled-message-list">
-        <article v-for="item in store.items" :key="item.id" class="scheduled-message-card">
-          <template v-if="editingId === item.id">
-            <div class="scheduled-message-edit-grid">
-              <el-select
-                v-model="editAppServerId"
-                class="scheduled-messages-field"
-                placeholder="Workspace"
-                filterable
+        <section
+          v-for="group in groupedItems"
+          :key="group.appServerId"
+          class="scheduled-message-group"
+        >
+          <header
+            class="scheduled-message-group-header"
+            role="button"
+            tabindex="0"
+            @click="toggleGroup(group.appServerId)"
+            @keydown.enter.prevent="toggleGroup(group.appServerId)"
+            @keydown.space.prevent="toggleGroup(group.appServerId)"
+          >
+            <div class="scheduled-message-group-title">
+              <span
+                class="scheduled-message-group-caret"
+                :class="{ 'is-collapsed': isGroupCollapsed(group.appServerId) }"
+                aria-hidden="true"
               >
-                <el-option
-                  v-for="server in appServers.appServers"
-                  :key="server.id"
-                  :label="serverLabel(server.id)"
-                  :value="server.id"
+                ▾
+              </span>
+              <strong>{{ group.label }}</strong>
+            </div>
+            <span>{{ group.items.length }}</span>
+          </header>
+          <article
+            v-for="item in group.items"
+            v-show="!isGroupCollapsed(group.appServerId)"
+            :key="item.id"
+            class="scheduled-message-card"
+          >
+            <template v-if="editingId === item.id">
+              <div class="scheduled-message-edit-grid">
+                <el-select
+                  v-model="editAppServerId"
+                  class="scheduled-messages-field"
+                  placeholder="Workspace"
+                  filterable
+                >
+                  <el-option
+                    v-for="server in appServers.appServers"
+                    :key="server.id"
+                    :label="serverLabel(server.id)"
+                    :value="server.id"
+                  />
+                </el-select>
+                <el-select
+                  v-model="editThreadId"
+                  class="scheduled-messages-field"
+                  placeholder="Thread"
+                  filterable
+                  :disabled="editAppServerId === null || editThreads.length === 0"
+                >
+                  <el-option
+                    v-for="thread in editThreads"
+                    :key="thread.id"
+                    :label="thread.threadName"
+                    :value="thread.id"
+                  />
+                </el-select>
+                <el-input-number
+                  v-model="editDelayHours"
+                  class="scheduled-messages-field scheduled-delay-input"
+                  :min="0"
+                  :step="1"
+                  controls-position="right"
+                  placeholder="Hours"
                 />
-              </el-select>
-              <el-select
-                v-model="editThreadId"
-                class="scheduled-messages-field"
-                placeholder="Thread"
-                filterable
-                :disabled="editAppServerId === null || editThreads.length === 0"
+                <el-input-number
+                  v-model="editDelayMinutes"
+                  class="scheduled-messages-field scheduled-delay-input"
+                  :min="0"
+                  :max="59"
+                  :step="1"
+                  controls-position="right"
+                  placeholder="Minutes"
+                />
+              </div>
+              <div
+                class="scheduled-message-drop-zone"
+                :class="{ 'is-drop-target': editDropTarget }"
+                @dragenter.prevent="dragEnterDraft($event, 'edit')"
+                @dragover.prevent="dragOverDraft($event, 'edit')"
+                @dragleave="dragLeaveDraft('edit')"
+                @drop.prevent="dropIntoDraft($event, 'edit')"
               >
-                <el-option
-                  v-for="thread in editThreads"
-                  :key="thread.id"
-                  :label="thread.threadName"
-                  :value="thread.id"
+                <ScheduledMessageComposer
+                  v-model="editText"
+                  :app-server-id="editAppServerId"
+                  placeholder="Message to send later. Use $skill or @path."
                 />
-              </el-select>
-              <el-input-number
-                v-model="editDelayHours"
-                class="scheduled-messages-field scheduled-delay-input"
-                :min="0"
-                :step="1"
-                controls-position="right"
-                placeholder="Hours"
-              />
-              <el-input-number
-                v-model="editDelayMinutes"
-                class="scheduled-messages-field scheduled-delay-input"
-                :min="0"
-                :max="59"
-                :step="1"
-                controls-position="right"
-                placeholder="Minutes"
-              />
-            </div>
-            <div
-              class="scheduled-message-drop-zone"
-              :class="{ 'is-drop-target': editDropTarget }"
-              @dragenter.prevent="dragEnterDraft($event, 'edit')"
-              @dragover.prevent="dragOverDraft($event, 'edit')"
-              @dragleave="dragLeaveDraft('edit')"
-              @drop.prevent="dropIntoDraft($event, 'edit')"
-            >
-              <ScheduledMessageComposer
-                v-model="editText"
-                :app-server-id="editAppServerId"
-                placeholder="Message to send later. Use $skill or @path."
-              />
-            </div>
-            <div class="scheduled-message-actions">
-              <span class="scheduled-message-meta">
-                Reschedule for {{ delayLabel(editDelaySecondsTotal) }} from now.
-              </span>
-              <div class="scheduled-message-action-buttons">
-                <el-button size="small" @click="cancelEdit">Cancel</el-button>
-                <el-button
-                  size="small"
-                  type="primary"
-                  :loading="updatingId === item.id"
-                  :disabled="editAppServerId === null || editThreadId === null || editText.trim().length === 0"
-                  @click="saveEdit(item.id)"
-                >
-                  Save
-                </el-button>
               </div>
-            </div>
-          </template>
-          <template v-else>
-            <div class="scheduled-message-topline">
-              <strong>{{ scheduledTargetLabel(item.appServerId, item.threadId) }}</strong>
-              <span class="scheduled-message-status" :class="`is-${item.status}`">{{ item.status }}</span>
-            </div>
-            <div class="scheduled-message-subline">
-              <span>{{ formatRunAt(item.runAt) }}</span>
-            </div>
-            <p class="scheduled-message-preview">{{ item.text }}</p>
-            <p v-if="item.status === 'failed' && item.lastError !== null" class="scheduled-message-error">
-              {{ item.lastError }}
-            </p>
-            <div class="scheduled-message-actions">
-              <span class="scheduled-message-meta">
-                {{ statusSummary(item) }}
-              </span>
-              <div class="scheduled-message-action-buttons">
-                <el-button
-                  v-if="item.status === 'sent'"
-                  size="small"
-                  type="success"
-                  :loading="acknowledgingId === item.id"
-                  @click="acknowledgeItem(item.id)"
-                >
-                  OK
-                </el-button>
-                <el-button
-                  v-if="editableStatuses.has(item.status)"
-                  size="small"
-                  @click="beginEdit(item)"
-                >
-                  Edit
-                </el-button>
-                <el-button
-                  v-if="item.status === 'scheduled' || item.status === 'failed'"
-                  size="small"
-                  type="danger"
-                  plain
-                  :loading="deletingId === item.id"
-                  @click="deleteItem(item.id)"
-                >
-                  Delete
-                </el-button>
+              <div class="scheduled-message-actions">
+                <span class="scheduled-message-meta">
+                  Reschedule for {{ delayLabel(editDelaySecondsTotal) }} from now.
+                </span>
+                <div class="scheduled-message-action-buttons">
+                  <el-button size="small" @click="cancelEdit">Cancel</el-button>
+                  <el-button
+                    size="small"
+                    type="primary"
+                    :loading="updatingId === item.id"
+                    :disabled="editAppServerId === null || editThreadId === null || editText.trim().length === 0"
+                    @click="saveEdit(item.id)"
+                  >
+                    Save
+                  </el-button>
+                </div>
               </div>
-            </div>
-          </template>
-        </article>
+            </template>
+            <template v-else>
+              <div class="scheduled-message-topline">
+                <strong>{{ threadLabel(item.threadId) }}</strong>
+                <span class="scheduled-message-status" :class="`is-${item.status}`">{{ item.status }}</span>
+              </div>
+              <div class="scheduled-message-subline">
+                <span>{{ formatRunAt(item.runAt) }}</span>
+              </div>
+              <p class="scheduled-message-preview">{{ item.text }}</p>
+              <p v-if="item.status === 'failed' && item.lastError !== null" class="scheduled-message-error">
+                {{ item.lastError }}
+              </p>
+              <div class="scheduled-message-actions">
+                <span class="scheduled-message-meta">
+                  {{ statusSummary(item) }}
+                </span>
+                <div class="scheduled-message-action-buttons">
+                  <el-button
+                    v-if="item.status === 'sent'"
+                    size="small"
+                    type="success"
+                    :loading="acknowledgingId === item.id"
+                    @click="acknowledgeItem(item.id)"
+                  >
+                    OK
+                  </el-button>
+                  <el-button
+                    v-if="editableStatuses.has(item.status)"
+                    size="small"
+                    @click="beginEdit(item)"
+                  >
+                    Edit
+                  </el-button>
+                  <el-button
+                    v-if="item.status === 'scheduled' || item.status === 'failed'"
+                    size="small"
+                    type="danger"
+                    plain
+                    :loading="deletingId === item.id"
+                    @click="deleteItem(item.id)"
+                  >
+                    Delete
+                  </el-button>
+                </div>
+              </div>
+            </template>
+          </article>
+        </section>
       </div>
     </div>
   </section>
@@ -255,6 +286,8 @@ import {
   readMessageTextDrop
 } from "../utils/messageDragDrop";
 
+const GROUP_COLLAPSE_STORAGE_KEY = "scheduledMessages.collapsedGroups";
+
 const appServers = useAppServerStore();
 const threads = useThreadStore();
 const store = useScheduledMessageStore();
@@ -278,6 +311,7 @@ const deletingId = ref<string | null>(null);
 const acknowledgingId = ref<string | null>(null);
 const createDropTarget = ref(false);
 const editDropTarget = ref(false);
+const collapsedGroups = ref<Record<string, boolean>>(loadCollapsedGroups());
 const editableStatuses = new Set<ScheduledMessageDto["status"]>(["scheduled", "failed"]);
 
 const currentThreads = computed<readonly ThreadDto[]>(() =>
@@ -291,6 +325,15 @@ const editThreads = computed<readonly ThreadDto[]>(() =>
 const createDelaySeconds = computed(() => toDelaySeconds(delayHours.value, delayMinutes.value));
 const editDelaySecondsTotal = computed(() =>
   toDelaySeconds(editDelayHours.value, editDelayMinutes.value)
+);
+const groupedItems = computed(() =>
+  appServers.appServers
+    .map((server) => ({
+      appServerId: server.id,
+      label: server.name,
+      items: store.items.filter((item) => item.appServerId === server.id)
+    }))
+    .filter((group) => group.items.length > 0)
 );
 
 onMounted(() => {
@@ -451,12 +494,27 @@ function formatRunAt(runAt: number): string {
 }
 
 function delayLabel(seconds: number): string {
-  if (seconds < 60) {
-    return `${seconds}s`;
+  const safeSeconds = Math.max(0, Math.ceil(seconds));
+  const days = Math.floor(safeSeconds / 86_400);
+  const hours = Math.floor((safeSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((safeSeconds % 3_600) / 60);
+  const remainderSeconds = safeSeconds % 60;
+  const parts: string[] = [];
+
+  if (days > 0) {
+    parts.push(`${days}d`);
   }
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes}m`);
+  }
+  if (remainderSeconds > 0 || parts.length === 0) {
+    parts.push(`${remainderSeconds}s`);
+  }
+
+  return parts.slice(0, 2).join(" ");
 }
 
 function toDelaySeconds(hours: number, minutes: number): number {
@@ -534,6 +592,48 @@ function setDraftDropTarget(target: "create" | "edit", active: boolean): void {
   }
 
   editDropTarget.value = active;
+}
+
+function isGroupCollapsed(appServerId: string): boolean {
+  return collapsedGroups.value[appServerId] === true;
+}
+
+function toggleGroup(appServerId: string): void {
+  collapsedGroups.value = {
+    ...collapsedGroups.value,
+    [appServerId]: !isGroupCollapsed(appServerId)
+  };
+  saveCollapsedGroups(collapsedGroups.value);
+}
+
+function loadCollapsedGroups(): Record<string, boolean> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  const raw = window.localStorage.getItem(GROUP_COLLAPSE_STORAGE_KEY);
+  if (raw === null) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === "object") {
+      return parsed as Record<string, boolean>;
+    }
+  } catch {
+    return {};
+  }
+
+  return {};
+}
+
+function saveCollapsedGroups(groups: Record<string, boolean>): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(GROUP_COLLAPSE_STORAGE_KEY, JSON.stringify(groups));
 }
 </script>
 
@@ -647,9 +747,49 @@ function setDraftDropTarget(target: "create" | "edit", active: boolean): void {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: 0.9rem;
   min-height: 0;
   overflow: auto;
+}
+
+.scheduled-message-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.scheduled-message-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.15rem 0.15rem 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  user-select: none;
+}
+
+.scheduled-message-group-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.scheduled-message-group-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.9rem;
+  font-size: 0.82rem;
+  transition: transform 140ms ease;
+}
+
+.scheduled-message-group-caret.is-collapsed {
+  transform: rotate(-90deg);
 }
 
 .scheduled-message-card {

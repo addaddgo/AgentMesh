@@ -1,5 +1,7 @@
 import type { AppServerDto, ApprovalDto, ThreadDto, TodoItemDto } from "@agentmesh/shared";
 
+import { useNotificationPreferencesStore } from "../stores/notificationPreferences";
+
 export function browserNotificationsEnabled(): boolean {
   return typeof window !== "undefined" && "Notification" in window;
 }
@@ -25,11 +27,7 @@ export async function requestBrowserNotificationPermission(): Promise<Notificati
 }
 
 export function notifyThreadReady(thread: ThreadDto, appServer: AppServerDto): void {
-  if (browserNotificationPermission() !== "granted") {
-    return;
-  }
-
-  new window.Notification("Thread ready for input", {
+  emitBrowserNotification("Thread ready for input", {
     body: `${appServer.name} / ${thread.threadName} can accept input again.`,
     tag: `thread-ready:${thread.id}`
   });
@@ -40,36 +38,69 @@ export function notifyApprovalRequired(
   thread: ThreadDto | null,
   appServer: AppServerDto | null
 ): void {
-  if (approval.status !== "pending" || browserNotificationPermission() !== "granted") {
+  if (approval.status !== "pending") {
     return;
   }
 
   const workspaceLabel = appServer?.name ?? "Workspace";
   const threadLabel = thread?.threadName ?? "thread";
-  new window.Notification("Approval required", {
+  emitBrowserNotification("Approval required", {
     body: `${workspaceLabel} / ${threadLabel} is waiting for permission.`,
     tag: `approval-required:${approval.id}`
   });
 }
 
 export function notifyErrorEvent(title: string, message: string, tag?: string): void {
-  if (browserNotificationPermission() !== "granted") {
-    return;
-  }
-
-  new window.Notification(title, {
+  emitBrowserNotification(title, {
     body: message,
     tag: tag ?? `error:${title}`
   });
 }
 
 export function notifyTodoDeadline(item: TodoItemDto): void {
-  if (browserNotificationPermission() !== "granted" || item.dueAt === null) {
+  if (item.dueAt === null) {
     return;
   }
 
-  new window.Notification("Todo deadline reached", {
+  emitBrowserNotification("Todo deadline reached", {
     body: item.category === null ? item.name : `${item.category} / ${item.name}`,
     tag: `todo-deadline:${item.id}:${item.dueAt}`
   });
+}
+
+export function pageInForeground(): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  return document.visibilityState === "visible" && document.hasFocus();
+}
+
+export function shouldSendBrowserNotification(): boolean {
+  if (browserNotificationPermission() !== "granted") {
+    return false;
+  }
+
+  const preferences = useNotificationPreferencesStore();
+  if (!preferences.browserEnabled) {
+    return false;
+  }
+
+  if (preferences.suppressWhenForeground && pageInForeground()) {
+    return false;
+  }
+
+  return true;
+}
+
+export function emitBrowserNotification(
+  title: string,
+  options: NotificationOptions = {}
+): boolean {
+  if (!shouldSendBrowserNotification()) {
+    return false;
+  }
+
+  new window.Notification(title, options);
+  return true;
 }

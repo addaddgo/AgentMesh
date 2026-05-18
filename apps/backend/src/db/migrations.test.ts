@@ -49,6 +49,7 @@ describe("database migrations", () => {
       "thread_imports",
       "thread_settings",
       "threads",
+      "todo_tag_rules",
       "todos",
       "turns",
       "ui_layouts"
@@ -90,7 +91,7 @@ describe("database migrations", () => {
     expect(
       columnNames(app.database.sqlite.pragma("table_info(todos)") as TableInfoRow[])
     ).toEqual(
-      expect.arrayContaining(["deadline_mode", "relative_duration_minutes", "due_at"])
+      expect.arrayContaining(["deadline_mode", "relative_duration_minutes", "due_at", "tags_json"])
     );
   });
 
@@ -138,6 +139,9 @@ describe("database migrations", () => {
     expect(
       indexNames(app.database.sqlite.pragma("index_list(queue_items)") as IndexListRow[])
     ).toContain("queue_items_pending_idx");
+    expect(
+      indexNames(app.database.sqlite.pragma("index_list(todo_tag_rules)") as IndexListRow[])
+    ).toContain("todo_tag_rules_importance_idx");
     expect(
       indexNames(app.database.sqlite.pragma("index_list(approvals)") as IndexListRow[])
     ).toContain("approvals_pending_idx");

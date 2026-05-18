@@ -28,6 +28,7 @@
         v-if="
           threadLeaves.length > 0 ||
           todoPanelVisible ||
+          priorityBoardPanelVisible ||
           statsPanelVisible ||
           accountLimitsPanelVisible ||
           scheduledMessagesPanelVisible
@@ -37,6 +38,7 @@
         <template
           v-if="
             todoPanelVisible ||
+            priorityBoardPanelVisible ||
             statsPanelVisible ||
             accountLimitsPanelVisible ||
             scheduledMessagesPanelVisible
@@ -44,6 +46,12 @@
         >
           <article v-if="todoPanelVisible" key="todo" class="thread-card">
             <TodoPanel @close="todoPanelVisible = false" />
+          </article>
+          <article v-if="priorityBoardPanelVisible" key="priority-board" class="thread-card">
+            <PriorityBoardPanel
+              @close="priorityBoardPanelVisible = false"
+              @ensure-todo-panel="todoPanelVisible = true"
+            />
           </article>
           <article v-if="statsPanelVisible" key="stats" class="thread-card">
             <WorkspaceStatsPanel @close="statsPanelVisible = false" />
@@ -210,6 +218,10 @@
             <el-button size="small" type="primary" :icon="Plus" circle title="Add" aria-label="Add Todo" @click.stop="addTool('todo')" />
           </div>
           <div class="tool-card">
+            <span class="tool-card-name">TODO Priority</span>
+            <el-button size="small" type="primary" :icon="Plus" circle title="Add" aria-label="Add TODO Priority" @click.stop="addTool('priority-board')" />
+          </div>
+          <div class="tool-card">
             <span class="tool-card-name">Workspace Stats</span>
             <el-button size="small" type="primary" :icon="Plus" circle title="Add" aria-label="Add Workspace Stats" @click="addTool('stats')" />
           </div>
@@ -271,6 +283,7 @@ import { computed, onMounted, ref, watch } from "vue";
 
 import ThreadPanel from "../components/ThreadPanel.vue";
 import AccountLimitsPanel from "../components/AccountLimitsPanel.vue";
+import PriorityBoardPanel from "../components/PriorityBoardPanel.vue";
 import ScheduledMessagesPanel from "../components/ScheduledMessagesPanel.vue";
 import TodoPanel from "../components/TodoPanel.vue";
 import WorkspaceStatsPanel from "../components/WorkspaceStatsPanel.vue";
@@ -310,6 +323,10 @@ const todoPanelVisible = ref(localStorage.getItem("todoPanelVisible") === "true"
 watch(todoPanelVisible, (visible) => {
   localStorage.setItem("todoPanelVisible", String(visible));
 });
+const priorityBoardPanelVisible = ref(localStorage.getItem("priorityBoardPanelVisible") === "true");
+watch(priorityBoardPanelVisible, (visible) => {
+  localStorage.setItem("priorityBoardPanelVisible", String(visible));
+});
 const statsPanelVisible = ref(localStorage.getItem("statsPanelVisible") === "true");
 watch(statsPanelVisible, (visible) => {
   localStorage.setItem("statsPanelVisible", String(visible));
@@ -323,9 +340,11 @@ watch(scheduledMessagesPanelVisible, (visible) => {
   localStorage.setItem("scheduledMessagesPanelVisible", String(visible));
 });
 
-function addTool(tool: "todo" | "stats" | "account-limits" | "scheduled-messages"): void {
+function addTool(tool: "todo" | "priority-board" | "stats" | "account-limits" | "scheduled-messages"): void {
   if (tool === "todo") {
     todoPanelVisible.value = true;
+  } else if (tool === "priority-board") {
+    priorityBoardPanelVisible.value = true;
   } else if (tool === "stats") {
     statsPanelVisible.value = true;
   } else if (tool === "account-limits") {

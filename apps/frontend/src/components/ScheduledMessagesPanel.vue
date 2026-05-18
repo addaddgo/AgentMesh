@@ -216,7 +216,19 @@
             </template>
             <template v-else>
               <div class="scheduled-message-topline">
-                <strong>{{ threadLabel(item.threadId) }}</strong>
+                <div class="scheduled-message-topline-main">
+                  <button
+                    type="button"
+                    class="scheduled-message-drag-handle"
+                    draggable="true"
+                    title="Drag scheduled message"
+                    aria-label="Drag scheduled message"
+                    @dragstart="onDragStart($event, item)"
+                  >
+                    ⋮⋮
+                  </button>
+                  <strong>{{ threadLabel(item.threadId) }}</strong>
+                </div>
                 <span class="scheduled-message-status" :class="`is-${item.status}`">{{ item.status }}</span>
               </div>
               <div class="scheduled-message-subline">
@@ -283,7 +295,8 @@ import { useThreadStore } from "../stores/threads";
 import {
   appendDroppedText,
   canDropMessageText,
-  readMessageTextDrop
+  readMessageTextDrop,
+  writeMessageTextDrag
 } from "../utils/messageDragDrop";
 
 const GROUP_COLLAPSE_STORAGE_KEY = "scheduledMessages.collapsedGroups";
@@ -550,6 +563,14 @@ function statusSummary(item: ScheduledMessageDto): string {
   }
 }
 
+function onDragStart(event: DragEvent, item: ScheduledMessageDto): void {
+  if (event.dataTransfer === null) {
+    return;
+  }
+
+  writeMessageTextDrag(event.dataTransfer, scheduledMessageDragText(item));
+}
+
 function dragEnterDraft(event: DragEvent, target: "create" | "edit"): void {
   updateDraftDropTarget(event, target);
 }
@@ -634,6 +655,10 @@ function saveCollapsedGroups(groups: Record<string, boolean>): void {
   }
 
   window.localStorage.setItem(GROUP_COLLAPSE_STORAGE_KEY, JSON.stringify(groups));
+}
+
+function scheduledMessageDragText(item: ScheduledMessageDto): string {
+  return `to_workspace: ${serverLabel(item.appServerId)}; to_thread: ${threadLabel(item.threadId)}; messages: ${item.text};`;
 }
 </script>
 
@@ -810,6 +835,13 @@ function saveCollapsedGroups(groups: Record<string, boolean>): void {
   gap: 0.8rem;
 }
 
+.scheduled-message-topline-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
 .scheduled-message-subline {
   color: var(--el-text-color-secondary);
   font-size: 0.8rem;
@@ -839,6 +871,30 @@ function saveCollapsedGroups(groups: Record<string, boolean>): void {
 
 .scheduled-message-status.is-canceled {
   color: var(--el-text-color-secondary);
+}
+
+.scheduled-message-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1;
+  letter-spacing: -0.08em;
+  cursor: grab;
+  user-select: none;
+}
+
+.scheduled-message-drag-handle:active {
+  cursor: grabbing;
+}
+
+.scheduled-message-drag-handle:hover {
+  color: var(--text-primary);
 }
 
 .scheduled-message-preview {

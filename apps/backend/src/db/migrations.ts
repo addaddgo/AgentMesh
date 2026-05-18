@@ -487,6 +487,45 @@ export const MIGRATIONS: readonly Migration[] = [
         ON scheduled_messages (app_server_id, created_at);
     `
   },
+  {
+    id: "0014_todo_tags_and_rules",
+    sql: `
+      ALTER TABLE todos
+        ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';
+
+      CREATE TABLE IF NOT EXISTS todo_tag_rules (
+        name TEXT PRIMARY KEY NOT NULL,
+        importance TEXT NOT NULL CHECK (importance IN ('important', 'normal')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS todo_tag_rules_importance_idx
+        ON todo_tag_rules (importance, name);
+    `
+  },
+  {
+    id: "0015_todo_tag_rules_optional_importance",
+    sql: `
+      ALTER TABLE todo_tag_rules RENAME TO todo_tag_rules_old;
+
+      CREATE TABLE todo_tag_rules (
+        name TEXT PRIMARY KEY NOT NULL,
+        importance TEXT NOT NULL CHECK (importance IN ('important', 'normal', 'optional')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      INSERT INTO todo_tag_rules (name, importance, created_at, updated_at)
+      SELECT name, importance, created_at, updated_at
+      FROM todo_tag_rules_old;
+
+      DROP TABLE todo_tag_rules_old;
+
+      CREATE INDEX IF NOT EXISTS todo_tag_rules_importance_idx
+        ON todo_tag_rules (importance, name);
+    `
+  },
 ];
 
 export function runMigrations(sqlite: Database): void {

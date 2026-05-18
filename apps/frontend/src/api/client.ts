@@ -422,6 +422,13 @@ export class ApiClient {
     return response.categories;
   }
 
+  public async listTodoTagRules(): Promise<readonly import("@agentmesh/shared").TodoTagRuleDto[]> {
+    const response = await this.request<import("@agentmesh/shared").TodoTagRuleListResponse>(
+      "/api/todos/tag-rules"
+    );
+    return response.rules;
+  }
+
   public async createTodo(payload: TodoCreateRequest): Promise<TodoItemDto> {
     const response = await this.request<{ readonly item: TodoItemDto }>("/api/todos", {
       method: "POST",
@@ -454,6 +461,40 @@ export class ApiClient {
       }
     );
     return response.items;
+  }
+
+  public async upsertTodoTagRule(
+    name: string,
+    payload: import("@agentmesh/shared").TodoTagRuleUpsertRequest
+  ): Promise<import("@agentmesh/shared").TodoTagRuleDto> {
+    const response = await this.request<import("@agentmesh/shared").TodoTagRuleResponse>(
+      `/api/todos/tag-rules/${encodeURIComponent(name)}`,
+      {
+        method: "PUT",
+        body: payload
+      }
+    );
+    return response.rule;
+  }
+
+  public async deleteTodoTagRule(name: string): Promise<void> {
+    await this.request<void>(`/api/todos/tag-rules/${encodeURIComponent(name)}`, {
+      method: "DELETE"
+    });
+  }
+
+  public async renameTodoTagRule(
+    name: string,
+    payload: import("@agentmesh/shared").TodoTagRuleRenameRequest
+  ): Promise<import("@agentmesh/shared").TodoTagRuleDto> {
+    const response = await this.request<import("@agentmesh/shared").TodoTagRuleResponse>(
+      `/api/todos/tag-rules/${encodeURIComponent(name)}/rename`,
+      {
+        method: "POST",
+        body: payload
+      }
+    );
+    return response.rule;
   }
 
   public async listScheduledMessages(): Promise<readonly ScheduledMessageDto[]> {

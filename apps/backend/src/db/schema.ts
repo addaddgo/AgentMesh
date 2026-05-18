@@ -295,6 +295,7 @@ export const todos = sqliteTable(
     name: text("name").notNull(),
     description: text("description").notNull().default(""),
     category: text("category"),
+    tagsJson: text("tags_json").notNull().default("[]"),
     sortIndex: integer("sort_index").notNull().default(0),
     dueAt: integer("due_at", { mode: "timestamp_ms" }),
     deadlineMode: text("deadline_mode", { enum: ["absolute", "relative"] }),
@@ -306,6 +307,17 @@ export const todos = sqliteTable(
   (table) => [
     index("todos_sort_index_idx").on(table.sortIndex)
   ]
+);
+
+export const todoTagRules = sqliteTable(
+  "todo_tag_rules",
+  {
+    name: text("name").primaryKey(),
+    importance: text("importance", { enum: ["important", "normal", "optional"] }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [index("todo_tag_rules_importance_idx").on(table.importance, table.name)]
 );
 
 export const scheduledMessages = sqliteTable(

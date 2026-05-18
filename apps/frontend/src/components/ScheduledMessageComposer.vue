@@ -24,6 +24,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { apiClient } from "../api/client";
 import { notifyError } from "../stores/errors";
+import { canDropMessageText } from "../utils/messageDragDrop";
 
 const props = defineProps<{
   readonly modelValue: string;
@@ -94,6 +95,15 @@ onMounted(() => {
         ])
       ),
       editableCompartment.of(EditorView.editable.of(props.disabled !== true)),
+      EditorView.domEventHandlers({
+        drop(event) {
+          if (canDropMessageText(event.dataTransfer)) {
+            event.preventDefault();
+            return true;
+          }
+          return false;
+        }
+      }),
       EditorView.updateListener.of((update) => {
         if (!update.docChanged || applyingExternalValue) {
           return;

@@ -47,18 +47,30 @@
         <article
           v-for="item in group.items"
           :key="item.id"
+        :ref="(element) => setTodoItemElement(item.id, element)"
         class="todo-item"
-        :class="{ done: item.done }"
-        draggable="true"
-        @dragstart="onDragStart($event, item)"
+        :class="{ done: item.done, highlighted: highlightedTodoId === item.id }"
         @dragover.prevent="onItemDragOver($event, item)"
         @drop.prevent.stop="onItemDrop($event, item)"
       >
-        <el-checkbox
-          :model-value="item.done"
-          size="large"
-          @change="toggleDone(item)"
-        />
+        <div class="todo-leading">
+          <el-checkbox
+            :model-value="item.done"
+            size="large"
+            @change="toggleDone(item)"
+          />
+          <button
+            type="button"
+            class="todo-drag-handle"
+            draggable="true"
+            title="Drag todo"
+            aria-label="Drag todo"
+            @dragstart="onDragStart($event, item)"
+            @dragend="dragItemId = null"
+          >
+            ⋮⋮
+          </button>
+        </div>
 
         <div class="todo-body">
           <div
@@ -117,6 +129,61 @@
         </div>
 
         <div class="todo-meta">
+          <el-select
+            v-if="editingId === item.id && editingField === 'tags'"
+            v-model="editTags"
+            size="small"
+            class="todo-tags-input todo-tags-inline-input"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="Tags"
+            @change="commitTagsEdit(item)"
+            @blur="commitTagsEdit(item)"
+            @keyup.escape="cancelEdit"
+          >
+            <el-option
+              v-for="rule in store.tagRules"
+              :key="rule.name"
+              :label="rule.name"
+              :value="rule.name"
+            />
+          </el-select>
+          <div
+            v-else
+            class="todo-tags-list"
+            :class="{ 'is-editable': !item.done }"
+            @click.stop="startEdit(item, 'tags')"
+          >
+            <template v-if="item.tags.length > 0">
+              <el-tag
+                v-for="tag in item.tags"
+                :key="tag"
+                size="small"
+                class="todo-inline-tag"
+                :type="
+                  tagImportance(tag) === 'important'
+                    ? 'danger'
+                    : tagImportance(tag) === 'optional'
+                      ? 'warning'
+                      : 'info'
+                "
+              >
+                {{ tag }}
+              </el-tag>
+            </template>
+            <button
+              v-else
+              type="button"
+              class="todo-category-add"
+              @click.stop="startEdit(item, 'tags')"
+            >
+              Add tags
+            </button>
+          </div>
           <el-autocomplete
             v-if="editingId === item.id && editingField === 'category'"
             v-model="editValue"
@@ -165,7 +232,7 @@
               type="datetime"
               size="small"
               placeholder="Deadline"
-              value-format="timestamp"
+              value-format="x"
               :disabled="item.done"
               class="todo-date-picker"
               @change="setDueDate(item, $event)"
@@ -240,6 +307,28 @@
           placeholder="Description (optional)"
         />
       </div>
+      <div class="todo-add-row-tags">
+        <el-select
+          v-model="newTags"
+          size="small"
+          class="todo-tags-input"
+          multiple
+          filterable
+          allow-create
+          default-first-option
+          collapse-tags
+          collapse-tags-tooltip
+          clearable
+          placeholder="Tags (optional)"
+        >
+          <el-option
+            v-for="rule in store.tagRules"
+            :key="rule.name"
+            :label="rule.name"
+            :value="rule.name"
+          />
+        </el-select>
+      </div>
       <div class="todo-add-row-deadline">
         <el-select v-model="newDeadlineMode" size="small" class="todo-deadline-mode">
           <el-option label="No deadline" value="none" />
@@ -252,7 +341,7 @@
           type="datetime"
           size="small"
           placeholder="Deadline"
-          value-format="timestamp"
+          value-format="x"
           class="todo-date-picker"
         />
         <template v-else-if="newDeadlineMode === 'relative'">
@@ -289,13 +378,88 @@
         />
       </div>
     </form>
+
+    <section class="todo-tag-rules">
+      <button type="button" class="todo-tag-rules-header" @click="tagRulesExpanded = !tagRulesExpanded">
+        <span>Tag Rules</span>
+        <span>{{ tagRulesExpanded ? "▼" : "▶" }}</span>
+      </button>
+      <div v-if="tagRulesExpanded" class="todo-tag-rules-body">
+        <form class="todo-tag-rule-create" @submit.prevent="createTagRule">
+          <el-input
+            v-model="newTagRuleName"
+            size="small"
+            placeholder="Tag name"
+          />
+          <el-select v-model="newTagRuleImportance" size="small" class="todo-tag-rule-select">
+            <el-option label="Important" value="important" />
+            <el-option label="Normal" value="normal" />
+            <el-option label="Optional" value="optional" />
+          </el-select>
+          <el-button
+            size="small"
+            class="todo-tag-rule-add"
+            :icon="Plus"
+            circle
+            native-type="submit"
+            :disabled="newTagRuleName.trim().length === 0"
+            title="Add tag rule"
+            aria-label="Add tag rule"
+          />
+        </form>
+        <div v-if="store.tagRules.length === 0" class="todo-tag-rules-empty">No tag rules yet.</div>
+        <div v-else class="todo-tag-rules-list">
+          <div v-for="rule in store.tagRules" :key="rule.name" class="todo-tag-rule-row">
+            <el-input
+              v-if="editingTagRuleName === rule.name"
+              v-model="editingTagRuleValue"
+              size="small"
+              class="todo-tag-rule-name-input"
+              @blur="commitTagRuleRename(rule.name)"
+              @keyup.enter="commitTagRuleRename(rule.name)"
+              @keyup.escape="cancelTagRuleRename"
+            />
+            <button
+              v-else
+              type="button"
+              class="todo-tag-rule-name todo-tag-rule-name-button"
+              @click="startTagRuleRename(rule.name)"
+            >
+              {{ rule.name }}
+            </button>
+            <div class="todo-tag-rule-actions">
+              <el-select
+                :model-value="rule.importance"
+                size="small"
+                class="todo-tag-rule-select"
+                @change="setTagRuleImportance(rule.name, $event)"
+              >
+                <el-option label="Important" value="important" />
+                <el-option label="Normal" value="normal" />
+                <el-option label="Optional" value="optional" />
+              </el-select>
+              <el-button
+                size="small"
+                type="danger"
+                plain
+                :icon="Delete"
+                circle
+                title="Delete tag rule"
+                aria-label="Delete tag rule"
+                @click="removeTagRule(rule.name)"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   </section>
 </template>
 
 <script setup lang="ts">
 import { CloseBold, Delete, Plus } from "@element-plus/icons-vue";
-import type { TodoDeadlineMode, TodoItemDto } from "@agentmesh/shared";
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import type { TodoDeadlineMode, TodoItemDto, TodoTagImportance } from "@agentmesh/shared";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 import { useTodoStore } from "../stores/todos";
 import { useThemeStore } from "../stores/theme";
@@ -315,16 +479,26 @@ const searchQuery = ref("");
 const newName = ref("");
 const newDescription = ref("");
 const newCategory = ref("");
+const newTags = ref<string[]>([]);
 const newDeadlineMode = ref<TodoDeadlineMode | "none">("none");
-const newDeadlineAt = ref<number | null>(null);
+const newDeadlineAt = ref<string | null>(null);
 const newRelativeHours = ref(1);
 const newRelativeMinutes = ref(0);
 const editingId = ref<string | null>(null);
-const editingField = ref<"name" | "description" | "category" | null>(null);
+const editingField = ref<"name" | "description" | "category" | "tags" | null>(null);
 const editValue = ref("");
+const editTags = ref<string[]>([]);
 const expandedIds = ref(new Set<string>());
 const expandedGroupNames = ref(new Set<string>(["Uncategorized"]));
+const tagRulesExpanded = ref(false);
+const newTagRuleName = ref("");
+const newTagRuleImportance = ref<TodoTagImportance>("normal");
+const editingTagRuleName = ref<string | null>(null);
+const editingTagRuleValue = ref("");
+const highlightedTodoId = ref<string | null>(null);
+const todoItemElements = new Map<string, HTMLElement>();
 let relativeDeadlineRefreshTimer: number | null = null;
+let todoHighlightTimer: number | null = null;
 
 function toggleGroup(name: string): void {
   const next = new Set(expandedGroupNames.value);
@@ -347,7 +521,7 @@ function toggleExpanded(id: string): void {
 }
 
 const dragItemId = ref<string | null>(null);
-const datePickerValue = reactive<Record<string, number | null>>({});
+const datePickerValue = reactive<Record<string, string | null>>({});
 const deadlineModeValue = reactive<Record<string, TodoDeadlineMode | "none">>({});
 const relativeHoursValue = reactive<Record<string, number>>({});
 const relativeMinutesValue = reactive<Record<string, number>>({});
@@ -421,7 +595,8 @@ const filteredItems = computed(() => {
   return store.items.filter(
     (item) =>
       item.name.toLowerCase().includes(query) ||
-      item.description.toLowerCase().includes(query)
+      item.description.toLowerCase().includes(query) ||
+      item.tags.some((tag) => tag.toLowerCase().includes(query))
   );
 });
 
@@ -448,6 +623,10 @@ onBeforeUnmount(() => {
     window.clearInterval(relativeDeadlineRefreshTimer);
     relativeDeadlineRefreshTimer = null;
   }
+  if (todoHighlightTimer !== null) {
+    window.clearTimeout(todoHighlightTimer);
+    todoHighlightTimer = null;
+  }
 });
 
 store.$subscribe((_mutation, _state) => {
@@ -470,7 +649,7 @@ function fetchCategorySuggestions(
   callback(results);
 }
 
-function startEdit(item: TodoItemDto, field: "name" | "description" | "category"): void {
+function startEdit(item: TodoItemDto, field: "name" | "description" | "category" | "tags"): void {
   if (item.done) {
     return;
   }
@@ -483,6 +662,10 @@ function startEdit(item: TodoItemDto, field: "name" | "description" | "category"
   }
   if (field === "description") {
     editValue.value = item.description;
+    return;
+  }
+  if (field === "tags") {
+    editTags.value = [...item.tags];
     return;
   }
   editValue.value = item.category ?? "";
@@ -511,10 +694,23 @@ function commitEdit(item: TodoItemDto): void {
   cancelEdit();
 }
 
+function commitTagsEdit(item: TodoItemDto): void {
+  if (editingId.value !== item.id || editingField.value !== "tags") {
+    return;
+  }
+
+  const nextTags = normalizeTags(editTags.value);
+  if (JSON.stringify(nextTags) !== JSON.stringify(item.tags)) {
+    void store.update(item.id, { tags: nextTags });
+  }
+  cancelEdit();
+}
+
 function cancelEdit(): void {
   editingId.value = null;
   editingField.value = null;
   editValue.value = "";
+  editTags.value = [];
 }
 
 async function toggleDone(item: TodoItemDto): Promise<void> {
@@ -522,10 +718,11 @@ async function toggleDone(item: TodoItemDto): Promise<void> {
 }
 
 async function setDueDate(item: TodoItemDto, value: number | null): Promise<void> {
-  datePickerValue[item.id] = value;
+  const dueAt = normalizeTimestamp(value);
+  datePickerValue[item.id] = dueAt === null ? null : String(dueAt);
   await store.update(item.id, {
-    dueAt: value,
-    deadlineMode: value === null ? null : "absolute",
+    dueAt,
+    deadlineMode: dueAt === null ? null : "absolute",
     relativeDurationMinutes: null
   });
 }
@@ -545,9 +742,9 @@ async function setItemDeadlineMode(
     return;
   }
 
-  if (mode === "absolute") {
+    if (mode === "absolute") {
     const dueAt = item.dueAt ?? Date.now() + 60 * 60 * 1000;
-    datePickerValue[item.id] = dueAt;
+    datePickerValue[item.id] = String(dueAt);
     await store.update(item.id, {
       dueAt,
       deadlineMode: "absolute",
@@ -593,15 +790,60 @@ async function addTodo(): Promise<void> {
     name,
     description: description || undefined,
     category,
+    tags: normalizeTags(newTags.value),
     ...buildNewTodoDeadlinePayload()
   });
   newName.value = "";
   newDescription.value = "";
   newCategory.value = "";
+  newTags.value = [];
   newDeadlineMode.value = "none";
   newDeadlineAt.value = null;
   newRelativeHours.value = 1;
   newRelativeMinutes.value = 0;
+}
+
+async function createTagRule(): Promise<void> {
+  const name = normalizeTagName(newTagRuleName.value);
+  if (name.length === 0) {
+    return;
+  }
+  await store.upsertTagRule(name, newTagRuleImportance.value);
+  newTagRuleName.value = "";
+  newTagRuleImportance.value = "normal";
+}
+
+async function setTagRuleImportance(name: string, importance: TodoTagImportance): Promise<void> {
+  await store.upsertTagRule(name, importance);
+}
+
+async function removeTagRule(name: string): Promise<void> {
+  await store.removeTagRule(name);
+}
+
+function startTagRuleRename(name: string): void {
+  editingTagRuleName.value = name;
+  editingTagRuleValue.value = name;
+}
+
+async function commitTagRuleRename(name: string): Promise<void> {
+  if (editingTagRuleName.value !== name) {
+    return;
+  }
+  const nextName = normalizeTagName(editingTagRuleValue.value);
+  if (nextName.length === 0) {
+    cancelTagRuleRename();
+    return;
+  }
+  if (nextName !== name) {
+    await store.renameTagRule(name, nextName);
+  }
+  cancelTagRuleRename();
+}
+
+function cancelTagRuleRename(): void {
+  editingTagRuleName.value = null;
+  editingTagRuleValue.value = "";
 }
 
 function onDragStart(event: DragEvent, item: TodoItemDto): void {
@@ -734,7 +976,7 @@ function syncTodoDeadlineState(): void {
   const activeIds = new Set<string>();
   for (const item of store.items) {
     activeIds.add(item.id);
-    datePickerValue[item.id] = item.dueAt;
+    datePickerValue[item.id] = item.dueAt === null ? null : String(item.dueAt);
     deadlineModeValue[item.id] = normalizeDeadlineMode(item);
     applyRelativeDraft(item.id, relativeMinutesForItem(item));
   }
@@ -807,7 +1049,7 @@ function buildNewTodoDeadlinePayload(): {
 } {
   if (newDeadlineMode.value === "absolute") {
     return {
-      dueAt: newDeadlineAt.value,
+      dueAt: normalizeTimestamp(newDeadlineAt.value),
       deadlineMode: newDeadlineAt.value === null ? null : "absolute",
       relativeDurationMinutes: null
     };
@@ -829,6 +1071,89 @@ function buildNewTodoDeadlinePayload(): {
     deadlineMode: null,
     relativeDurationMinutes: null
   };
+}
+
+function normalizeTimestamp(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function tagImportance(tag: string): TodoTagImportance {
+  return store.tagRules.find((rule) => rule.name === tag)?.importance ?? "normal";
+}
+
+function normalizeTags(tags: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const tag of tags) {
+    const normalized = normalizeTagName(tag);
+    if (normalized.length === 0 || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function normalizeTagName(tag: string): string {
+  return tag.trim().replace(/\s+/g, " ");
+}
+
+function setTodoItemElement(
+  id: string,
+  element:
+    | Element
+    | { readonly $el?: Element | null | undefined }
+    | null
+): void {
+  if (element instanceof HTMLElement) {
+    todoItemElements.set(id, element);
+    return;
+  }
+  if (element !== null && "$el" in element && element.$el instanceof HTMLElement) {
+    todoItemElements.set(id, element.$el);
+    return;
+  }
+  todoItemElements.delete(id);
+}
+
+watch(
+  () => [store.focusRequestKey, store.items.length],
+  async () => {
+    const id = store.focusedTodoId;
+    if (id === null) {
+      return;
+    }
+
+    await nextTick();
+    expandedGroupForTodo(id);
+    await nextTick();
+    todoItemElements.get(id)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    highlightedTodoId.value = id;
+    if (todoHighlightTimer !== null) {
+      window.clearTimeout(todoHighlightTimer);
+    }
+    todoHighlightTimer = window.setTimeout(() => {
+      highlightedTodoId.value = null;
+      todoHighlightTimer = null;
+    }, 1800);
+  },
+  { immediate: true }
+);
+
+function expandedGroupForTodo(id: string): void {
+  const item = store.items.find((entry) => entry.id === id);
+  if (item === undefined) {
+    return;
+  }
+  const groupName = item.category ?? "Uncategorized";
+  const next = new Set(expandedGroupNames.value);
+  next.add(groupName);
+  expandedGroupNames.value = next;
 }
 </script>
 
@@ -882,7 +1207,9 @@ function buildNewTodoDeadlinePayload(): {
 .todo-search :deep(.el-input__wrapper),
 .todo-add-form :deep(.el-input__wrapper),
 .todo-date-picker :deep(.el-input__wrapper),
-.todo-edit-inline :deep(.el-input__wrapper) {
+.todo-edit-inline :deep(.el-input__wrapper),
+.todo-tags-input :deep(.el-select__wrapper),
+.todo-tag-rule-select :deep(.el-select__wrapper) {
   background: var(--todo-input-bg);
   box-shadow: 0 0 0 1px var(--todo-input-border) inset;
 }
@@ -903,18 +1230,48 @@ function buildNewTodoDeadlinePayload(): {
   border: 1px solid var(--border-list);
   border-radius: 0.75rem;
   background: var(--todo-item-bg, var(--bg-row-subtle));
-  cursor: grab;
   transition:
     border-color 120ms ease,
     background 120ms ease;
 }
 
-.todo-item:active {
+.todo-item.done {
+  opacity: 0.62;
+}
+
+.todo-item.highlighted {
+  border-color: color-mix(in srgb, var(--accent-primary) 52%, var(--border-list));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+.todo-leading {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.todo-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  padding: 0.05rem 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1;
+  letter-spacing: -0.08em;
+  cursor: grab;
+  user-select: none;
+}
+
+.todo-drag-handle:active {
   cursor: grabbing;
 }
 
-.todo-item.done {
-  opacity: 0.62;
+.todo-drag-handle:hover {
+  color: var(--text-primary);
 }
 
 .todo-body {
@@ -1009,6 +1366,22 @@ function buildNewTodoDeadlinePayload(): {
   flex-shrink: 0;
 }
 
+.todo-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-height: 1.7rem;
+  align-items: center;
+}
+
+.todo-tags-list.is-editable {
+  cursor: pointer;
+}
+
+.todo-inline-tag {
+  cursor: pointer;
+}
+
 .todo-date-picker {
   width: 188px;
 }
@@ -1065,6 +1438,11 @@ function buildNewTodoDeadlinePayload(): {
   gap: 0.35rem;
 }
 
+.todo-add-row-tags {
+  display: flex;
+  gap: 0.35rem;
+}
+
 .todo-category-input {
   width: 130px;
   flex-shrink: 0;
@@ -1072,6 +1450,14 @@ function buildNewTodoDeadlinePayload(): {
 
 .todo-category-inline-input {
   width: 116px;
+}
+
+.todo-tags-input {
+  width: 100%;
+}
+
+.todo-tags-inline-input {
+  min-width: 220px;
 }
 
 .todo-description-input {
@@ -1102,6 +1488,84 @@ function buildNewTodoDeadlinePayload(): {
   color: var(--ink);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+.todo-tag-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.45rem;
+  padding: 1rem 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.todo-tag-rules-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.todo-tag-rules-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.todo-tag-rule-create,
+.todo-tag-rule-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.todo-tag-rule-name {
+  min-width: 0;
+  word-break: break-word;
+  font-size: 0.88rem;
+}
+
+.todo-tag-rule-name-button {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.todo-tag-rule-name-button:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.todo-tag-rule-name-input {
+  width: 100%;
+}
+
+.todo-tag-rule-actions {
+  display: contents;
+}
+
+.todo-tag-rules-empty {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.todo-tag-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
 }
 
 .todo-group-header {

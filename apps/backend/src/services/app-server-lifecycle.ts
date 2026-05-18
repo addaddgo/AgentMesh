@@ -17,11 +17,15 @@ type RegistryEntry = {
   readonly transport: CodexJsonRpcTransport;
   expectedStop: boolean;
   exitHandled: boolean;
-  healthCheckTimer: ReturnType<typeof setInterval> | undefined;
+  healthCheckTimer: ReturnType<typeof setTimeout> | undefined;
+  healthCheckStopped: boolean;
+  healthCheckInFlight: boolean;
+  consecutiveHealthFailures: number;
 };
 
-const HEALTH_CHECK_INTERVAL_MS = 1_000;
-const HEALTH_CHECK_TIMEOUT_MS = 5_000;
+const HEALTH_CHECK_INTERVAL_MS = 60_000;
+const HEALTH_CHECK_TIMEOUT_MS = 300_000;
+const HEALTH_CHECK_FAILURE_THRESHOLD = 3;
 const CURRENT_WORKSPACE_ENV = "AGENTMESH_CURRENT_WORKSPACE";
 const LEGACY_CURRENT_WORKSPACE_ENV = "AGENTMES_CURRENT_WORKSPACE";
 
@@ -83,7 +87,10 @@ export class AppServerLifecycleRegistry {
       transport,
       expectedStop: false,
       exitHandled: false,
-      healthCheckTimer: undefined
+      healthCheckTimer: undefined,
+      healthCheckStopped: false,
+      healthCheckInFlight: false,
+      consecutiveHealthFailures: 0
     };
 
     this.entries.set(id, entry);
@@ -377,28 +384,124 @@ export class AppServerLifecycleRegistry {
       payload: { appServer }
     });
   }
+
   private startHealthCheck(entry: RegistryEntry): void {
-    entry.healthCheckTimer = setInterval(async () => {
-      try {
-        await entry.transport.request("model/list", undefined, HEALTH_CHECK_TIMEOUT_MS);
-      } catch (error) {
-        // Only treat transport-level failures (timeout / closed) as process death.
-        // Codex RPC errors (method not found, etc.) mean the process is still alive.
-        if (
-          error instanceof CodexJsonRpcTimeoutError ||
-          error instanceof CodexJsonRpcClosedError
-        ) {
-          this.handleProcessExit(entry, { code: null, signal: "SIGKILL" });
-        }
-      }
-    }, HEALTH_CHECK_INTERVAL_MS);
+    entry.healthCheckStopped = false;
+    entry.healthCheckInFlight = false;
+    entry.consecutiveHealthFailures = 0;
+    this.scheduleNextHealthCheck(entry, HEALTH_CHECK_INTERVAL_MS);
   }
 
   private stopHealthCheck(entry: RegistryEntry): void {
+    entry.healthCheckStopped = true;
     if (entry.healthCheckTimer !== undefined) {
-      clearInterval(entry.healthCheckTimer);
+      clearTimeout(entry.healthCheckTimer);
       entry.healthCheckTimer = undefined;
     }
+  }
+
+  private scheduleNextHealthCheck(entry: RegistryEntry, delayMs: number): void {
+    if (entry.healthCheckStopped || entry.exitHandled || entry.expectedStop) {
+      return;
+    }
+
+    if (entry.healthCheckTimer !== undefined) {
+      clearTimeout(entry.healthCheckTimer);
+    }
+
+    entry.healthCheckTimer = setTimeout(() => {
+      entry.healthCheckTimer = undefined;
+      void this.runHealthCheck(entry);
+    }, delayMs);
+  }
+
+  private async runHealthCheck(entry: RegistryEntry): Promise<void> {
+    if (entry.healthCheckStopped || entry.exitHandled || entry.expectedStop) {
+      return;
+    }
+
+    if (entry.healthCheckInFlight) {
+      return;
+    }
+
+    entry.healthCheckInFlight = true;
+
+    try {
+      await entry.transport.request("model/list", {}, HEALTH_CHECK_TIMEOUT_MS);
+      entry.consecutiveHealthFailures = 0;
+    } catch (error) {
+      if (error instanceof CodexJsonRpcClosedError) {
+        this.handleProcessExit(entry, { code: null, signal: "SIGKILL" });
+        return;
+      }
+
+      if (error instanceof CodexJsonRpcTimeoutError) {
+        entry.consecutiveHealthFailures += 1;
+        if (entry.consecutiveHealthFailures >= HEALTH_CHECK_FAILURE_THRESHOLD) {
+          this.handleHealthCheckFailure(
+            entry,
+            `Codex app-server health check timed out ${entry.consecutiveHealthFailures} times`
+          );
+          return;
+        }
+      }
+    } finally {
+      entry.healthCheckInFlight = false;
+    }
+
+    this.scheduleNextHealthCheck(entry, HEALTH_CHECK_INTERVAL_MS);
+  }
+
+  private handleHealthCheckFailure(entry: RegistryEntry, reason: string): void {
+    if (entry.exitHandled) {
+      return;
+    }
+
+    entry.exitHandled = true;
+    this.stopHealthCheck(entry);
+    this.entries.delete(entry.appServerId);
+
+    if (!this.appServerExists(entry.appServerId)) {
+      return;
+    }
+
+    this.database.sqlite
+      .prepare(
+        `
+          INSERT INTO codex_events (id, app_server_id, thread_id, turn_id, event_type, raw_json, created_at)
+          VALUES (?, ?, NULL, NULL, 'health_check.failed', ?, ?)
+        `
+      )
+      .run(
+        randomUUID(),
+        entry.appServerId,
+        JSON.stringify({
+          reason,
+          consecutiveFailures: entry.consecutiveHealthFailures
+        } satisfies JsonValue),
+        Date.now()
+      );
+
+    this.approvals.markPendingForAppServerFailed(entry.appServerId, reason);
+
+    const now = Date.now();
+    this.database.sqlite.prepare(
+      "UPDATE turns SET status = 'failed', completed_at = ?, error = COALESCE(error, ?), updated_at = ? WHERE app_server_id = ? AND status IN ('queued', 'running', 'waiting_approval')"
+    ).run(now, reason, now, entry.appServerId);
+    this.database.sqlite.prepare(
+      "UPDATE messages SET status = 'failed', updated_at = ? WHERE app_server_id = ? AND status IN ('pending', 'queued', 'sent', 'streaming')"
+    ).run(now, entry.appServerId);
+    this.database.sqlite.prepare(
+      "UPDATE queue_items SET status = 'failed', updated_at = ? WHERE app_server_id = ? AND status IN ('pending', 'running', 'waiting_approval')"
+    ).run(now, entry.appServerId);
+
+    this.markAppServerThreadsNotLoaded(entry.appServerId);
+    this.publishStatus(
+      this.appServers.setStatus(entry.appServerId, "error", {
+        lastError: reason,
+        lastSeenAt: now
+      })
+    );
   }
 
   private appServerExists(id: string): boolean {

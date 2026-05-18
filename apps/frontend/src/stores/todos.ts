@@ -1,4 +1,11 @@
-import type { TodoItemDto, TodoCreateRequest, TodoUpdateRequest, TodoReorderRequest } from "@agentmesh/shared";
+import type {
+  TodoCreateRequest,
+  TodoItemDto,
+  TodoReorderRequest,
+  TodoTagImportance,
+  TodoTagRuleDto,
+  TodoUpdateRequest
+} from "@agentmesh/shared";
 import { defineStore } from "pinia";
 
 import { apiClient } from "../api/client";
@@ -8,9 +15,12 @@ import { notifyError } from "./errors";
 type TodoState = {
   items: TodoItemDto[];
   categories: string[];
+  tagRules: TodoTagRuleDto[];
   loading: boolean;
   deadlineWatcherStarted: boolean;
   notifiedDeadlineKeys: Record<string, true>;
+  focusedTodoId: string | null;
+  focusRequestKey: number;
 };
 
 const TODO_DEADLINE_NOTIFICATIONS_STORAGE_KEY = "todoDeadlineNotifications";
@@ -20,15 +30,23 @@ export const useTodoStore = defineStore("todos", {
   state: (): TodoState => ({
     items: [],
     categories: [],
+    tagRules: [],
     loading: false,
     deadlineWatcherStarted: false,
-    notifiedDeadlineKeys: {}
+    notifiedDeadlineKeys: {},
+    focusedTodoId: null,
+    focusRequestKey: 0
   }),
 
   actions: {
     async loadCategories(): Promise<void> {
       try {
-        this.categories = [...(await apiClient.listTodoCategories())];
+        const [categories, tagRules] = await Promise.all([
+          apiClient.listTodoCategories(),
+          apiClient.listTodoTagRules()
+        ]);
+        this.categories = [...categories];
+        this.tagRules = [...tagRules];
       } catch (error) {
         notifyError(error, "Failed to load todo categories");
       }
@@ -37,12 +55,14 @@ export const useTodoStore = defineStore("todos", {
     async load(): Promise<void> {
       this.loading = true;
       try {
-        const [items, categories] = await Promise.all([
+        const [items, categories, tagRules] = await Promise.all([
           apiClient.listTodos(),
-          apiClient.listTodoCategories()
+          apiClient.listTodoCategories(),
+          apiClient.listTodoTagRules()
         ]);
         this.items = [...items];
         this.categories = [...categories];
+        this.tagRules = [...tagRules];
         this.evaluateDeadlineNotifications();
       } catch (error) {
         notifyError(error, "Failed to load todos");
@@ -70,6 +90,36 @@ export const useTodoStore = defineStore("todos", {
       await apiClient.deleteTodo(id);
       this.items = this.items.filter((existing) => existing.id !== id);
       await this.loadCategories();
+    },
+
+    async upsertTagRule(name: string, importance: TodoTagImportance): Promise<void> {
+      const rule = await apiClient.upsertTodoTagRule(name, { importance });
+      const next = this.tagRules.filter((existing) => existing.name !== rule.name);
+      next.push(rule);
+      next.sort((left, right) => left.name.localeCompare(right.name));
+      this.tagRules = next;
+    },
+
+    async removeTagRule(name: string): Promise<void> {
+      await apiClient.deleteTodoTagRule(name);
+      this.tagRules = this.tagRules.filter((rule) => rule.name !== name);
+    },
+
+    async renameTagRule(name: string, nextName: string): Promise<void> {
+      const rule = await apiClient.renameTodoTagRule(name, { nextName });
+      this.tagRules = this.tagRules
+        .filter((existing) => existing.name !== name && existing.name !== rule.name)
+        .concat(rule)
+        .sort((left, right) => left.name.localeCompare(right.name));
+      this.items = this.items.map((item) => ({
+        ...item,
+        tags: item.tags.map((tag) => (tag === name ? rule.name : tag))
+      }));
+    },
+
+    requestFocus(id: string): void {
+      this.focusedTodoId = id;
+      this.focusRequestKey += 1;
     },
 
     async reorder(ids: readonly string[]): Promise<void> {
